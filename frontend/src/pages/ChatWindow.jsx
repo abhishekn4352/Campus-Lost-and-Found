@@ -2,16 +2,20 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../utils/errorMessage';
 import Spinner from '../components/Spinner';
 
 export default function ChatWindow() {
   const { id: convId } = useParams();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [messages, setMessages] = useState([]);
   const [conversation, setConversation] = useState(null);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
+  const [sending, setSending] = useState(false);
   const scrollRef = useRef();
 
   useEffect(() => {
@@ -42,19 +46,26 @@ export default function ChatWindow() {
 
   const handleSend = async (e) => {
     e.preventDefault();
-    if (!content.trim()) return;
+    const trimmed = content.trim();
+    // Guards against both an empty send AND a rapid double-click/repeated
+    // Enter press firing the same message twice before the first request
+    // completes — previously there was no such guard on this form.
+    if (!trimmed || sending) return;
+    setSending(true);
     try {
       const otherParticipant = conversation.participants.find(p => p._id !== user._id);
       const { data } = await API.post('/messages/send', {
         convId,
         itemId: conversation.itemId._id,
         receiverId: otherParticipant._id,
-        content
+        content: trimmed
       });
       setMessages([...messages, data]);
       setContent('');
     } catch (err) {
-      console.error(err);
+      showToast(getErrorMessage(err, 'Failed to send message.'), 'error');
+    } finally {
+      setSending(false);
     }
   };
 
@@ -158,13 +169,14 @@ export default function ChatWindow() {
         <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
           <input 
             className="inp" 
-            placeholder="Type a message..." 
+            placeholder="Type a message..."
             value={content}
             onChange={(e) => setContent(e.target.value)}
+            disabled={sending}
             style={{ borderRadius: '25px', padding: '10px 20px' }}
           />
-          <button type="submit" className="btn btn-neon" style={{ borderRadius: '50%', width: '46px', height: '46px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            ➤
+          <button type="submit" className="btn btn-neon" disabled={sending || !content.trim()} style={{ borderRadius: '50%', width: '46px', height: '46px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {sending ? '…' : '➤'}
           </button>
         </form>
       </div>

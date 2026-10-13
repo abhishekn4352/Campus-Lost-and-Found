@@ -1,36 +1,56 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import API from '../api/axios';
 import ItemCard from '../components/ItemCard';
 import Spinner from '../components/Spinner';
 
 const CATEGORIES = ['Electronics', 'Books', 'ID Card', 'Keys', 'Wallet', 'Clothing', 'Sports', 'Other'];
+const SEARCH_DEBOUNCE_MS = 400;
 
 export default function ItemList() {
   const [items, setItems]     = useState([]);
   const [filters, setFilters] = useState({ type: '', category: '' });
-  const [search, setSearch]   = useState('');
+  const [search, setSearch]   = useState('');           // what the user is typing, updates instantly
+  const [debouncedSearch, setDebouncedSearch] = useState(''); // what actually drives the API call
   const [loading, setLoading] = useState(true);
+  // Guards against a race condition debouncing alone doesn't fully solve:
+  // if an earlier (slower) request resolves after a later (faster) one,
+  // its stale results would otherwise overwrite the current, correct
+  // ones. Each fetch is tagged with an incrementing id; only the response
+  // matching the most recently *started* request is applied.
+  const latestRequestId = useRef(0);
+
+  // Debounce: only update debouncedSearch (and therefore only fire an API
+  // call) after the user pauses typing for SEARCH_DEBOUNCE_MS, instead of
+  // on every keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const fetchItems = async () => {
+    const requestId = ++latestRequestId.current;
     setLoading(true);
     try {
-      const url    = search ? `/items/search?q=${encodeURIComponent(search)}` : '/items';
-      const params = search ? {} : { type: filters.type, category: filters.category, status: 'active' };
+      const url    = debouncedSearch ? `/items/search?q=${encodeURIComponent(debouncedSearch)}` : '/items';
+      const params = debouncedSearch ? {} : { type: filters.type, category: filters.category };
       const { data } = await API.get(url, { params });
-      setItems(data);
+      if (requestId === latestRequestId.current) {
+        setItems(data);
+      } // else: a newer request has since started — discard this stale response
     } catch (err) {
       console.error(err);
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   };
 
-  useEffect(() => { fetchItems(); }, [filters, search]);
+  useEffect(() => { fetchItems(); }, [filters, debouncedSearch]);
 
   const lostCount  = items.filter(i => i.type === 'lost').length;
   const foundCount = items.filter(i => i.type === 'found').length;
 
-  const clearAll = () => { setFilters({ type: '', category: '' }); setSearch(''); };
+  const clearSearch = () => { setSearch(''); setDebouncedSearch(''); };
+  const clearAll = () => { setFilters({ type: '', category: '' }); clearSearch(); };
   const hasFilters = filters.type || filters.category || search;
 
   return (
@@ -64,7 +84,7 @@ export default function ItemList() {
                   style={{ paddingLeft: 36, paddingRight: 32 }}
                 />
                 {search && (
-                  <button className="search-clear" onClick={() => setSearch('')}>✕</button>
+                  <button className="search-clear" onClick={clearSearch}>✕</button>
                 )}
               </div>
             </div>

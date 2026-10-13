@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import API from '../api/axios';
 
 const features = [
   {
@@ -34,15 +36,29 @@ const features = [
   },
 ];
 
-const stats = [
-  { num: '1.2K+', lbl: 'Items Reunited' },
-  { num: '4.5K', lbl: 'Active Members' },
-  { num: '92%', lbl: 'Success Rate' },
-  { num: '<24h', lbl: 'Avg. Match Time' },
-];
-
 export default function Home() {
   const { isLoggedIn } = useAuth();
+
+  // Real numbers from the database — previously this was a hardcoded,
+  // fake "1.2K+ Items Reunited" style row that never changed. When the
+  // sample size is too small to be meaningful (e.g. a brand-new campus
+  // deployment), the backend returns null rather than a misleading
+  // number, and this shows an honest "just getting started" placeholder
+  // instead of fabricating a rate.
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    API.get('/items/stats')
+      .then(({ data }) => setStats(data))
+      .catch(() => setStats(null)); // homepage still works fine without this strip
+  }, []);
+
+  const statDisplay = [
+    { num: stats ? `${stats.reunited}${stats.reunited >= 100 ? '+' : ''}` : '—', lbl: 'Items Reunited' },
+    { num: stats ? `${stats.activeMembers}${stats.activeMembers >= 100 ? '+' : ''}` : '—', lbl: 'Active Members' },
+    { num: stats?.successRate != null ? `${stats.successRate}%` : 'New', lbl: 'Success Rate' },
+    { num: stats?.avgResolutionHours != null ? `${stats.avgResolutionHours}h` : '—', lbl: 'Avg. Match Time' },
+  ];
 
   return (
     <div>
@@ -85,7 +101,7 @@ export default function Home() {
       <div className="stats-strip">
         <div className="container">
           <div className="row text-center">
-            {stats.map((s, i) => (
+            {statDisplay.map((s, i) => (
               <div className="col-6 col-md-3" key={i}>
                 <div className={`stat-item anim-up delay-${i + 1}`}>
                   <div className="stat-num">{s.num}</div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import API from '../api/axios';
 
@@ -9,6 +9,21 @@ export default function OtpVerify() {
   const [msg, setMsg]       = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Which item this claim is actually for — previously this page gave no
+  // confirmation of that at all, which is disorienting if someone has
+  // more than one thing in progress. Reuses the existing /claims/my-claims
+  // list (already returns populated item info) instead of adding a new
+  // single-claim backend endpoint just for this.
+  const [claimItem, setClaimItem] = useState(null);
+
+  useEffect(() => {
+    API.get('/claims/my-claims')
+      .then(({ data }) => {
+        const match = data.find(c => c._id === claimId);
+        if (match?.itemId) setClaimItem(match.itemId);
+      })
+      .catch(() => {}); // non-critical — the OTP form still works without this context
+  }, [claimId]);
 
   const handleVerify = async e => {
     e.preventDefault();
@@ -34,9 +49,19 @@ export default function OtpVerify() {
         <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', fontWeight: 800, marginBottom: 6 }}>
           Verify Your Claim
         </h2>
-        <p style={{ color: 'var(--text-3)', fontSize: '0.875rem', marginBottom: 28, fontWeight: 300, lineHeight: 1.6 }}>
+        <p style={{ color: 'var(--text-3)', fontSize: '0.875rem', marginBottom: claimItem ? 16 : 28, fontWeight: 300, lineHeight: 1.6 }}>
           Check your college email for the 6-digit code and enter it below to confirm your claim.
         </p>
+
+        {claimItem && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--panel-2, var(--panel))', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '10px 14px', marginBottom: 20, textAlign: 'left' }}>
+            <span style={{ fontSize: '1.3rem' }}>{claimItem.type === 'lost' ? '❓' : '📦'}</span>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Claiming</div>
+              <div style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{claimItem.title}</div>
+            </div>
+          </div>
+        )}
 
         {msg && (
           <div className={`alert-box ${success ? 'alert-ok' : 'alert-err'}`} style={{ marginBottom: 20, justifyContent: 'center' }}>
@@ -55,6 +80,9 @@ export default function OtpVerify() {
             required
             disabled={success}
             autoFocus
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
           />
 
           {/* Progress dots */}
@@ -88,7 +116,9 @@ export default function OtpVerify() {
         </form>
 
         <p style={{ marginTop: 20, fontSize: '0.78rem', color: 'var(--text-3)', lineHeight: 1.6 }}>
-          OTP expires in 10 minutes. Didn't receive it? Check your spam folder.
+          {success
+            ? 'The item has been marked as Claimed and the owner has been notified. You can track it anytime from My Claims.'
+            : "OTP expires in 10 minutes. Didn't receive it? Check your spam folder."}
         </p>
       </div>
     </div>

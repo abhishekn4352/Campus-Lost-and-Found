@@ -2,16 +2,20 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import API from '../api/axios';
 import Spinner from '../components/Spinner';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../utils/errorMessage';
 
 export default function MyPosts() {
   const [items, setItems]   = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [deleting, setDeleting] = useState(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     API.get('/items/my-posts')
       .then(({ data }) => { setItems(data); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch((err) => { setError(getErrorMessage(err, 'Could not load your posts.')); setLoading(false); });
   }, []);
 
   const handleDelete = async id => {
@@ -20,8 +24,9 @@ export default function MyPosts() {
     try {
       await API.delete(`/items/${id}`);
       setItems(items.filter(i => i._id !== id));
+      showToast('Item deleted.', 'success');
     } catch (err) {
-      alert(err.response?.data?.message || 'Delete failed');
+      showToast(getErrorMessage(err, 'Delete failed.'), 'error');
     } finally {
       setDeleting(null);
     }
@@ -32,8 +37,9 @@ export default function MyPosts() {
     try {
       await API.put(`/items/${id}`, { status: newStatus });
       setItems(items.map(i => i._id === id ? { ...i, status: newStatus } : i));
+      showToast(`Item marked as ${newStatus}.`, 'success');
     } catch (err) {
-      alert(err.response?.data?.message || 'Update failed');
+      showToast(getErrorMessage(err, 'Update failed.'), 'error');
     }
   };
 
@@ -49,6 +55,8 @@ export default function MyPosts() {
         </div>
         <Link to="/post-item" className="btn btn-neon">+ New Report</Link>
       </div>
+
+      {error && <div className="alert-box alert-err" role="alert" style={{ marginBottom: 20 }}>⚠️ {error}</div>}
 
       {items.length > 0 && (
         <div className="anim-in" style={{ marginBottom: '24px', padding: '16px', background: 'var(--ink-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', gap: '16px', alignItems: 'center' }}>

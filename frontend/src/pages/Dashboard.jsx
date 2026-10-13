@@ -9,9 +9,12 @@ export default function Dashboard() {
   const [stats, setStats] = useState({ totalPosts: 0, activeClaims: 0, resolved: 0 });
   const [recentItems, setRecentItems] = useState([]);
   const [totalUnread, setTotalUnread] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchData = async () => {
+      setError('');
       try {
         const [postsRes, itemsRes, convsRes] = await Promise.all([
           API.get('/items/my-posts'),
@@ -34,6 +37,7 @@ export default function Dashboard() {
         setTotalUnread(unread);
       } catch (err) {
         console.error('Failed to fetch dashboard data', err);
+        setError('Could not load your dashboard right now. Please try refreshing.');
       } finally {
         setLoading(false);
       }
@@ -50,6 +54,10 @@ export default function Dashboard() {
         <h1 className="pg-title">Dashboard</h1>
         <p className="pg-sub">Manage your items and track your activity</p>
       </div>
+
+      {error && (
+        <div className="alert-box alert-err" style={{ marginBottom: '24px' }}>⚠️ {error}</div>
+      )}
 
       {totalUnread > 0 && (
         <div className="anim-in" style={{ marginBottom: '32px' }}>
@@ -91,7 +99,7 @@ export default function Dashboard() {
               recentItems.map((item, i) => (
                 <Link to={`/items/${item._id}`} key={item._id} className="recent-item-row anim-in" style={{ animationDelay: `${i * 0.1}s`, display: 'flex', gap: '16px', padding: '16px', background: 'var(--ink-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', marginBottom: '12px', textDecoration: 'none', color: 'inherit', transition: 'transform 0.2s' }}>
                   <div style={{ width: '60px', height: '60px', borderRadius: '8px', overflow: 'hidden', background: 'var(--ink-3)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
-                    {item.imageUrl ? <img src={`${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '📦'}
+                    {item.imageUrl ? <img src={`${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`} alt={item.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '📦'}
                   </div>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '1rem' }}>{item.title}</div>

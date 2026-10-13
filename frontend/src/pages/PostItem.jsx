@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api/axios';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../utils/errorMessage';
 
 const CATEGORIES = ['Electronics', 'Books', 'ID Card', 'Keys', 'Wallet', 'Clothing', 'Sports', 'Other'];
 
 export default function PostItem() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [form, setForm] = useState({
     type: 'lost', title: '', description: '',
     category: '', location: '', lostFoundDate: ''
@@ -38,9 +41,10 @@ export default function PostItem() {
     if (image) fd.append('image', image);
     try {
       await API.post('/items', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      showToast(`Your ${form.type} item report was posted.`, 'success');
       navigate('/my-posts');
     } catch (err) {
-      setError(err.response?.data?.message || 'Failed to post item');
+      setError(getErrorMessage(err, 'Failed to post item'));
     } finally {
       setLoading(false);
     }
@@ -84,8 +88,9 @@ export default function PostItem() {
               </div>
 
               <div className="field">
-                <label className="field-label">Item Title</label>
+                <label className="field-label" htmlFor="post-title">Item Title</label>
                 <input
+                  id="post-title"
                   className="inp"
                   name="title"
                   value={form.title}
@@ -96,8 +101,9 @@ export default function PostItem() {
               </div>
 
               <div className="field">
-                <label className="field-label">Description</label>
+                <label className="field-label" htmlFor="post-description">Description</label>
                 <textarea
+                  id="post-description"
                   className="inp"
                   name="description"
                   rows={3}
@@ -112,8 +118,9 @@ export default function PostItem() {
               <div className="row g-3">
                 <div className="col-md-6">
                   <div className="field">
-                    <label className="field-label">Category</label>
+                    <label className="field-label" htmlFor="post-category">Category</label>
                     <select
+                      id="post-category"
                       className="inp inp-select"
                       name="category"
                       value={form.category}
@@ -127,8 +134,9 @@ export default function PostItem() {
                 </div>
                 <div className="col-md-6">
                   <div className="field">
-                    <label className="field-label">Date Lost / Found</label>
+                    <label className="field-label" htmlFor="post-date">Date Lost / Found</label>
                     <input
+                      id="post-date"
                       type="date"
                       className="inp"
                       name="lostFoundDate"
@@ -141,8 +149,9 @@ export default function PostItem() {
               </div>
 
               <div className="field">
-                <label className="field-label">Location on Campus</label>
+                <label className="field-label" htmlFor="post-location">Location on Campus</label>
                 <input
+                  id="post-location"
                   className="inp"
                   name="location"
                   placeholder="e.g. Library Block A, Cafeteria, Auditorium"
@@ -154,9 +163,9 @@ export default function PostItem() {
 
               {/* Image Upload */}
               <div className="field">
-                <label className="field-label">Photo <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(optional)</span></label>
+                <label className="field-label" htmlFor="post-item-image">Photo <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(optional)</span></label>
                 <div className="upload-zone">
-                  <input type="file" accept="image/*" onChange={handleImageChange} />
+                  <input id="post-item-image" type="file" accept="image/*" onChange={handleImageChange} />
                   {!imagePreview && (
                     <>
                       <div style={{ fontSize: '1.8rem', marginBottom: 6, opacity: 0.4 }}>📷</div>

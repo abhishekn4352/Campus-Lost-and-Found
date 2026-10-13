@@ -56,7 +56,7 @@ export default function ChatList() {
                 {/* Item Thumbnail */}
                 <div className="claim-thumb" style={{ width: '60px', height: '60px', borderRadius: '8px', flexShrink: 0 }}>
                   {item?.imageUrl ? (
-                    <img src={`${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    <img src={`${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`} alt={item?.title || 'Item thumbnail'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   ) : <span>📦</span>}
                 </div>
 

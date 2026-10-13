@@ -2,16 +2,21 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { getErrorMessage } from '../utils/errorMessage';
 import Spinner from '../components/Spinner';
 
 export default function ItemDetail() {
   const { id } = useParams();
   const { user, isLoggedIn } = useAuth();
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [item, setItem]         = useState(null);
   const [loading, setLoading]   = useState(true);
   const [msg, setMsg]           = useState('');
+  const [msgType, setMsgType]   = useState('warn');
   const [claiming, setClaiming] = useState(false);
+  const [requestingClaim, setRequestingClaim] = useState(false);
 
   useEffect(() => {
     API.get(`/items/${id}`)
@@ -37,12 +42,42 @@ export default function ItemDetail() {
       if (conv) {
         navigate(`/messages/${conv._id}`);
       } else {
+        setMsgType('info');
         setMsg('Conversation started. Check your messages.');
       }
     } catch (err) {
-      setMsg(err.response?.data?.message || 'Error initializing contact');
+      setMsgType('err');
+      setMsg(getErrorMessage(err, 'Error initializing contact'));
     } finally {
       setClaiming(false);
+    }
+  };
+
+  // This is the entry point for the OTP-verified claim workflow
+  // (backend: claimController.requestClaim -> /verify-otp/:claimId page).
+  // On success, jump straight to the OTP-entry page using the claimId
+  // the backend returns. If the person already has a pending claim on
+  // this item, the backend tells us its claimId too — reuse that instead
+  // of showing a dead-end error.
+  const handleRequestClaim = async () => {
+    if (!isLoggedIn()) return navigate('/login');
+    setRequestingClaim(true);
+    setMsg('');
+    try {
+      const { data } = await API.post(`/claims/request/${id}`);
+      showToast('OTP sent to your email — enter it to confirm your claim.', 'success');
+      navigate(`/verify-otp/${data.claimId}`);
+    } catch (err) {
+      const existingClaimId = err.response?.data?.claimId;
+      if (existingClaimId) {
+        showToast('You already have a pending claim on this item.', 'info');
+        navigate(`/verify-otp/${existingClaimId}`);
+        return;
+      }
+      setMsgType('err');
+      setMsg(getErrorMessage(err, 'Unable to request a claim right now.'));
+    } finally {
+      setRequestingClaim(false);
     }
   };
 
@@ -118,10 +153,12 @@ export default function ItemDetail() {
 
           {/* Actions */}
           {msg && (
-            <div className="alert-box alert-warn" style={{ marginTop: 16 }}>⚠️ {msg}</div>
+            <div className={`alert-box alert-${msgType}`} style={{ marginTop: 16 }}>
+              {msgType === 'err' ? '⚠️' : msgType === 'info' ? 'ℹ️' : '⚠️'} {msg}
+            </div>
           )}
 
-          {!isOwner && (item.status === 'Open' || item.status === 'active') && (
+          {!isOwner && item.status === 'Open' && (
             <div style={{ marginTop: 24 }}>
               <button
                 className="btn btn-neon btn-full btn-lg"
@@ -132,8 +169,19 @@ export default function ItemDetail() {
                   ? <><span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Processing…</>
                   : '✉️ Send Secure Message to Owner'}
               </button>
+              <button
+                className="btn btn-ghost btn-full btn-lg"
+                style={{ marginTop: 10 }}
+                onClick={handleRequestClaim}
+                disabled={requestingClaim}
+              >
+                {requestingClaim
+                  ? <><span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Requesting…</>
+                  : `🔓 This is ${item.type === 'lost' ? 'mine — Request Claim' : 'my item — Claim it'}`}
+              </button>
               <p style={{ marginTop: 12, fontSize: '0.8rem', color: 'var(--text-3)', textAlign: 'center' }}>
                 🔒 Your contact info is safe. You can choose to share it within the chat once you've connected.
+                Requesting a claim sends a one-time code to your email to confirm it's really you.
               </p>
             </div>
           )}
@@ -150,7 +198,7 @@ export default function ItemDetail() {
             </div>
           )}
 
-          {(item.status === 'Closed' || item.status === 'claimed') && (
+          {item.status === 'Closed' && (
             <div className="alert-box alert-ok" style={{ marginTop: 16 }}>
               ✅ This item has been successfully returned and closed.
             </div>
