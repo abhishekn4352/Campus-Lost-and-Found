@@ -2,16 +2,20 @@ import { useState, useEffect } from 'react';
 import API from '../../api/axios';
 import Spinner from '../../components/Spinner';
 import { AdminNav } from './AdminDashboard';
+import { useToast } from '../../context/ToastContext';
+import { getErrorMessage } from '../../utils/errorMessage';
 
 export default function AdminClaims() {
   const [claims, setClaims]   = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [acting, setActing]   = useState(null);
+  const { showToast } = useToast();
 
   useEffect(() => {
     API.get('/admin/claims')
       .then(({ data }) => { setClaims(data); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch((err) => { setError(getErrorMessage(err, 'Could not load claims.')); setLoading(false); });
   }, []);
 
   const handleApprove = async id => {
@@ -19,7 +23,8 @@ export default function AdminClaims() {
     try {
       await API.put(`/admin/claims/${id}/approve`);
       setClaims(claims.map(c => c._id === id ? { ...c, status: 'approved' } : c));
-    } catch { alert('Failed to approve'); }
+      showToast('Claim approved.', 'success');
+    } catch (err) { showToast(getErrorMessage(err, 'Failed to approve.'), 'error'); }
     finally { setActing(null); }
   };
 
@@ -29,7 +34,8 @@ export default function AdminClaims() {
     try {
       await API.put(`/admin/claims/${id}/reject`);
       setClaims(claims.map(c => c._id === id ? { ...c, status: 'rejected' } : c));
-    } catch { alert('Failed to reject'); }
+      showToast('Claim rejected.', 'success');
+    } catch (err) { showToast(getErrorMessage(err, 'Failed to reject.'), 'error'); }
     finally { setActing(null); }
   };
 
@@ -54,6 +60,8 @@ export default function AdminClaims() {
 
       <AdminNav />
 
+      {error && <div className="alert-box alert-err" role="alert" style={{ marginBottom: 20 }}>⚠️ {error}</div>}
+
       {claims.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-icon">🙋</div>
@@ -61,11 +69,12 @@ export default function AdminClaims() {
           <p className="empty-state-sub">No claims have been submitted yet.</p>
         </div>
       ) : (
-        <div className="tbl-wrap anim-in" style={{ overflowX: 'auto' }}>
+        <div className="tbl-wrap anim-in">
           <table className="tbl">
             <thead>
               <tr>
                 <th>Item</th>
+                <th>Owner</th>
                 <th>Claimed By</th>
                 <th>OTP</th>
                 <th>Status</th>
@@ -87,8 +96,15 @@ export default function AdminClaims() {
                     )}
                   </td>
                   <td>
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text)' }}>{claim.itemId?.postedBy?.name || '—'}</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{claim.itemId?.postedBy?.email}</div>
+                  </td>
+                  <td>
                     <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text)' }}>{claim.claimedBy?.name}</div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{claim.claimedBy?.email}</div>
+                    {claim.itemId?.postedBy?._id && claim.claimedBy?._id === claim.itemId.postedBy._id && (
+                      <div style={{ fontSize: '0.68rem', color: 'var(--amber)', marginTop: 2 }}>⚠️ Same as owner</div>
+                    )}
                   </td>
                   <td>
                     {claim.otpVerified

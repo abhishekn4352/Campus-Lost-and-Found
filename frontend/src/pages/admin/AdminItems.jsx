@@ -3,17 +3,23 @@ import { Link } from 'react-router-dom';
 import API from '../../api/axios';
 import Spinner from '../../components/Spinner';
 import { AdminNav } from './AdminDashboard';
+import { useToast } from '../../context/ToastContext';
+import { getErrorMessage } from '../../utils/errorMessage';
 
 export default function AdminItems() {
   const [items, setItems]     = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [deleting, setDeleting] = useState(null);
   const [search, setSearch]   = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const { showToast } = useToast();
 
   useEffect(() => {
     API.get('/admin/items')
       .then(({ data }) => { setItems(data); setLoading(false); })
-      .catch(() => setLoading(false));
+      .catch((err) => { setError(getErrorMessage(err, 'Could not load items.')); setLoading(false); });
   }, []);
 
   const handleDelete = async id => {
@@ -22,18 +28,21 @@ export default function AdminItems() {
     try {
       await API.delete(`/admin/items/${id}`);
       setItems(items.filter(i => i._id !== id));
-    } catch {
-      alert('Failed to delete');
+      showToast('Item deleted.', 'success');
+    } catch (err) {
+      showToast(getErrorMessage(err, 'Failed to delete.'), 'error');
     } finally {
       setDeleting(null);
     }
   };
 
   const filtered = items.filter(item =>
-    !search ||
-    item.title?.toLowerCase().includes(search.toLowerCase()) ||
-    item.postedBy?.name?.toLowerCase().includes(search.toLowerCase()) ||
-    item.category?.toLowerCase().includes(search.toLowerCase())
+    (!search ||
+      item.title?.toLowerCase().includes(search.toLowerCase()) ||
+      item.postedBy?.name?.toLowerCase().includes(search.toLowerCase()) ||
+      item.category?.toLowerCase().includes(search.toLowerCase())) &&
+    (!statusFilter || item.status === statusFilter) &&
+    (!typeFilter || item.type === typeFilter)
   );
 
   if (loading) return <Spinner text="Loading items…" />;
@@ -48,19 +57,40 @@ export default function AdminItems() {
 
       <AdminNav />
 
-      {/* Search */}
-      <div className="search-box" style={{ marginBottom: 20, maxWidth: 360 }}>
-        <span className="search-icon">🔍</span>
-        <input
-          className="inp"
-          placeholder="Search by title, user, category…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ paddingLeft: 36 }}
-        />
+      {error && <div className="alert-box alert-err" role="alert" style={{ marginBottom: 20 }}>⚠️ {error}</div>}
+
+      {/* Search + filters */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+        <div className="search-box" style={{ maxWidth: 360, flex: '1 1 240px' }}>
+          <span className="search-icon">🔍</span>
+          <input
+            className="inp"
+            placeholder="Search by title, user, category…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{ paddingLeft: 36 }}
+          />
+        </div>
+        <select className="inp inp-select" style={{ maxWidth: 160 }} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+          <option value="">All Types</option>
+          <option value="lost">Lost</option>
+          <option value="found">Found</option>
+        </select>
+        <select className="inp inp-select" style={{ maxWidth: 160 }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <option value="">All Statuses</option>
+          <option value="Open">Open</option>
+          <option value="Claimed">Claimed</option>
+          <option value="Closed">Closed</option>
+        </select>
       </div>
 
-      <div className="tbl-wrap anim-in" style={{ overflowX: 'auto' }}>
+      {(statusFilter || typeFilter || search) && (
+        <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', marginTop: -12, marginBottom: 16 }}>
+          Showing {filtered.length} of {items.length} items
+        </p>
+      )}
+
+      <div className="tbl-wrap anim-in">
         <table className="tbl">
           <thead>
             <tr>
