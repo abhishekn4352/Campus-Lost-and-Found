@@ -2,6 +2,7 @@ const router = require('express').Router();
 const ctrl = require('../controllers/itemController');
 const { protect } = require('../middleware/authMiddleware');
 
+router.get('/stats', ctrl.getPublicStats);
 router.get('/search', ctrl.searchItems);
 router.get('/my-posts', protect, ctrl.getMyPosts);
 router.get('/', ctrl.getItems);
