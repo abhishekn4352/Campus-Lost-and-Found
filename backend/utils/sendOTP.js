@@ -1,8 +1,17 @@
 const nodemailer = require('nodemailer');
 
+// Bounded timeouts are essential here: without them, an unreachable SMTP
+// server (wrong credentials, blocked network egress, provider outage)
+// causes sendMail() to hang indefinitely, which in turn hangs the
+// request-otp/send-message HTTP request forever instead of failing with
+// a clean, catchable error. Verified live: without these, a POST to
+// /auth/request-otp against an unreachable SMTP target never returned.
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+  connectionTimeout: 10000, // time to establish the TCP connection
+  greetingTimeout: 10000,   // time to wait for the SMTP greeting after connecting
+  socketTimeout: 15000,     // time to wait for activity on the socket once connected
 });
 
 exports.sendOTPEmail = async (toEmail, toName, otp, itemTitle = null) => {
