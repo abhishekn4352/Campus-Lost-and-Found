@@ -4,12 +4,39 @@ const Item = require('../models/Item');
 const User = require('../models/User');
 const { sendMessageEmail } = require('../utils/sendOTP');
 
+// Shared helper: loads a conversation and verifies req.user is one of its
+// participants. Returns { conv } on success, or writes a 404/403 response
+// and returns null on failure — callers should `return` immediately when
+// they get `null` back.
+async function loadAuthorizedConversation(req, res, conversationId) {
+  const conv = await Conversation.findById(conversationId);
+  if (!conv) {
+    res.status(404).json({ message: 'Conversation not found' });
+    return null;
+  }
+  const isParticipant = conv.participants.some(
+    (p) => p.toString() === req.user._id.toString()
+  );
+  if (!isParticipant) {
+    res.status(403).json({ message: 'Not authorized to access this conversation' });
+    return null;
+  }
+  return conv;
+}
+
 // @desc    Send a message (and potentially start a conversation)
 // @route   POST /api/messages/send
 exports.sendMessage = async (req, res) => {
   try {
     const { itemId, receiverId, content } = req.body;
     const senderId = req.user._id;
+
+    if (!content || !content.trim()) {
+      return res.status(400).json({ message: 'Message content is required' });
+    }
+    if (!receiverId || receiverId === senderId.toString()) {
+      return res.status(400).json({ message: 'Invalid recipient' });
+    }
 
     // 1. Find or create conversation
     let conv = await Conversation.findOne({
@@ -26,6 +53,9 @@ exports.sendMessage = async (req, res) => {
           { userId: receiverId, shared: false }
         ]
       });
+    } else if (!conv.participants.some((p) => p.toString() === senderId.toString())) {
+      // Defensive: conversation existed but the sender isn't part of it.
+      return res.status(403).json({ message: 'Not authorized to message in this conversation' });
     }
 
     // 2. Create message
@@ -43,10 +73,10 @@ exports.sendMessage = async (req, res) => {
     try {
       const receiver = await User.findById(receiverId);
       const item = await Item.findById(itemId);
-      
-      const isInactive = !receiver.lastActive || (Date.now() - new Date(receiver.lastActive).getTime() > 180000); // 3 mins
-      
-      if (isInactive) {
+
+      const isInactive = receiver && (!receiver.lastActive || (Date.now() - new Date(receiver.lastActive).getTime() > 180000)); // 3 mins
+
+      if (isInactive && item) {
         await sendMessageEmail(receiver.email, receiver.name, req.user.name, item.title);
         console.log(`Smart Email sent to ${receiver.email} - Inactivity detected.`);
       }
@@ -92,7 +122,10 @@ exports.getConversations = async (req, res) => {
 exports.getMessages = async (req, res) => {
   try {
     const { convId } = req.params;
-    
+
+    const conv = await loadAuthorizedConversation(req, res, convId);
+    if (!conv) return; // response already sent (404 or 403)
+
     // Mark messages sent by others as read
     await Message.updateMany(
       { conversationId: convId, sender: { $ne: req.user._id }, read: false },
@@ -103,6 +136,7 @@ exports.getMessages = async (req, res) => {
       .sort('createdAt');
     res.json(messages);
   } catch (err) {
+    if (err.name === 'CastError') return res.status(404).json({ message: 'Conversation not found' });
     res.status(500).json({ message: err.message });
   }
 };
@@ -114,8 +148,8 @@ exports.shareContact = async (req, res) => {
     const { conversationId } = req.body;
     const userId = req.user._id;
 
-    const conv = await Conversation.findById(conversationId);
-    if (!conv) return res.status(404).json({ message: 'Conversation not found' });
+    const conv = await loadAuthorizedConversation(req, res, conversationId);
+    if (!conv) return; // response already sent (404 or 403)
 
     // Update specific user's share status
     const userShare = conv.shares.find(s => s.userId.toString() === userId.toString());
@@ -124,12 +158,13 @@ exports.shareContact = async (req, res) => {
     }
 
     await conv.save();
-    
+
     // Check if both shared
     const bothShared = conv.shares.every(s => s.shared === true);
-    
+
     res.json({ shares: conv.shares, bothShared });
   } catch (err) {
+    if (err.name === 'CastError') return res.status(404).json({ message: 'Conversation not found' });
     res.status(500).json({ message: err.message });
   }
 };
