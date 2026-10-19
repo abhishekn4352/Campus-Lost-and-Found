@@ -29,7 +29,7 @@ describe('authController.requestOTP (regression test for the missing-phone crash
       constructedDocs.push(this);
     });
 
-    const req = { body: { email: 'brandnew@college.edu' } };
+    const req = { body: { email: 'brandnew@college.edu', purpose: 'register' } };
     const res = mockRes();
 
     await requestOTP(req, res);
@@ -57,7 +57,7 @@ describe('authController.requestOTP (regression test for the missing-phone crash
     User.findOne.mockResolvedValue(null);
     User.mockImplementation(function (data) { Object.assign(this, data); this.save = jest.fn().mockResolvedValue(true); });
 
-    const req = { body: { email: '  Student@College.EDU  ' } };
+    const req = { body: { email: '  Student@College.EDU  ', purpose: 'register' } };
     const res = mockRes();
     await requestOTP(req, res);
 
@@ -199,7 +199,7 @@ describe('authController.register (regression test for account-overwrite fix)', 
     await register(req, res);
 
     expect(res.status).toHaveBeenCalledWith(400);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/6 characters/i) }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/8 characters/i) }));
   });
 
   test('rejects re-registration of an already-verified account', async () => {
@@ -256,7 +256,7 @@ describe('authController.register (regression test for account-overwrite fix)', 
     };
     User.findOne.mockResolvedValue(userDoc);
 
-    const req = { body: { name: 'New Student', email: 'newstudent2@college.edu', password: 'pw123456', phone: '1', collegeId: 'S2', otp: '222222' } };
+    const req = { body: { name: 'New Student', email: 'newstudent2@college.edu', password: 'pw123456', phone: '5551234567', collegeId: 'S2', otp: '222222' } };
     const res = mockRes();
 
     await register(req, res);

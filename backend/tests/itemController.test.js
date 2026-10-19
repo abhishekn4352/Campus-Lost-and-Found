@@ -1,5 +1,6 @@
 jest.mock('../models/Item');
 jest.mock('../models/User');
+jest.mock('../models/Claim');
 
 const Item = require('../models/Item');
 const User = require('../models/User');
