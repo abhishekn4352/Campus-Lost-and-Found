@@ -1,16 +1,33 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
+const mongoose = require('mongoose');
+const { validateEnv } = require('./config/env');
+validateEnv();
+
 const connectDB = require('./config/db');
 const app = require('./app');
 
 const PORT = process.env.PORT || 5000;
 
-// Only start accepting requests once the DB connection is established,
-// so the app never serves traffic that is guaranteed to fail on every
-// DB-backed route, and so a Mongo outage at boot doesn't silently kill
-// an already-listening server out from under active connections.
+// Only start accepting requests once the DB connection is established, so
+// the app never serves traffic that is guaranteed to fail.
 connectDB().then(() => {
   require('./utils/cronJobs');
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  const server = app.listen(PORT, () => console.log(`Server running on port ${PORT} (${process.env.NODE_ENV || 'development'})`));
+
+  // Graceful shutdown: stop taking new connections, let in-flight requests
+  // finish, close the DB, then exit. Platforms send SIGTERM on every deploy.
+  const shutdown = (signal) => {
+    console.log(`${signal} received — shutting down gracefully`);
+    server.close(async () => {
+      await mongoose.connection.close(false).catch(() => {});
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 10000).unref(); // hard stop if something hangs
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 });
+
+process.on('unhandledRejection', (reason) => console.error('Unhandled promise rejection:', reason));
