@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  base: process.env.GITHUB_ACTIONS ? '/Lost-Found-System-Campus-Based-/' : '/',
   server: {
     port: 3000,
     proxy: {

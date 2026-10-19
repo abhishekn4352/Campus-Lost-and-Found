@@ -92,7 +92,10 @@ export default function App() {
         <AuthProvider>
           <NotificationsProvider>
             <ConfirmProvider>
-              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <BrowserRouter
+                basename={import.meta.env.BASE_URL}
+                future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+              >
                 <Navbar />
                 <main id="main" tabIndex={-1}>
                   <AppRoutes />
