@@ -1,8 +1,10 @@
-import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { CheckCircle2, AlertTriangle, Info, X } from 'lucide-react';
 
-const ToastContext = createContext();
-
+const ToastContext = createContext({ showToast: () => {}, dismissToast: () => {} });
 let idCounter = 0;
+
+const ICONS = { success: CheckCircle2, error: AlertTriangle, warning: AlertTriangle, info: Info };
 
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
@@ -15,33 +17,31 @@ export function ToastProvider({ children }) {
   }, []);
 
   // type: 'success' | 'error' | 'warning' | 'info'
-  const showToast = useCallback((message, type = 'info', duration = 4000) => {
+  const showToast = useCallback((message, type = 'info', duration = 4500) => {
     const id = ++idCounter;
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => [...prev.slice(-3), { id, message, type }]);
     timers.current[id] = setTimeout(() => dismissToast(id), duration);
     return id;
   }, [dismissToast]);
+
+  useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
 
   return (
     <ToastContext.Provider value={{ showToast, dismissToast }}>
       {children}
       <div className="toast-stack" role="status" aria-live="polite">
-        {toasts.map((t) => (
-          <div key={t.id} className={`toast-item alert-box alert-${t.type === 'error' ? 'err' : t.type === 'success' ? 'ok' : t.type}`}>
-            <span aria-hidden="true">
-              {t.type === 'success' ? '✅' : t.type === 'error' ? '⚠️' : t.type === 'warning' ? '⚠️' : 'ℹ️'}
-            </span>
-            <span style={{ flex: 1 }}>{t.message}</span>
-            <button
-              type="button"
-              className="toast-dismiss"
-              onClick={() => dismissToast(t.id)}
-              aria-label="Dismiss notification"
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        {toasts.map((t) => {
+          const Icon = ICONS[t.type] || Info;
+          return (
+            <div key={t.id} className={`toast t-${t.type}`} role={t.type === 'error' ? 'alert' : undefined}>
+              <Icon size={20} aria-hidden="true" />
+              <span style={{ flex: 1 }}>{t.message}</span>
+              <button type="button" onClick={() => dismissToast(t.id)} aria-label="Dismiss notification">
+                <X size={16} aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })}
       </div>
     </ToastContext.Provider>
   );
