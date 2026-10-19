@@ -3,76 +3,84 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Profile from '../pages/Profile';
 
-vi.mock('../api/axios', () => ({
-  default: { get: vi.fn(), put: vi.fn() },
-}));
+vi.mock('../api/axios', () => ({ default: { put: vi.fn() } }));
 import API from '../api/axios';
 
 const mockLogin = vi.fn();
-const mockUser = { _id: 'u1', name: 'Riya Sharma', email: 'riya@college.edu', phone: '5551234567', collegeId: 'STU100', role: 'student' };
-vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ user: mockUser, login: mockLogin }),
-}));
+const currentUser = { _id: 'u1', name: 'Riya Sharma', email: 'riya@college.edu', phone: '98765 43210', collegeId: 'STU2041', role: 'student' };
+vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: currentUser, login: mockLogin }) }));
+vi.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'light', toggleTheme: vi.fn() }) }));
+const mockToast = vi.fn();
+vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showToast: mockToast }) }));
 
-const mockShowToast = vi.fn();
-vi.mock('../context/ToastContext', () => ({
-  useToast: () => ({ showToast: mockShowToast }),
-}));
+describe('Profile page', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-describe('Profile page (new feature)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    API.get.mockImplementation((url) => {
-      if (url === '/items/my-posts') return Promise.resolve({ data: [{ status: 'Open' }, { status: 'Closed' }] });
-      if (url === '/claims/my-claims') return Promise.resolve({ data: [{ status: 'pending' }] });
-      return Promise.resolve({ data: [] });
-    });
-  });
-
-  test('pre-fills the form with the current user\'s name and phone', async () => {
+  test('pre-fills the editable fields and locks email and college ID', () => {
     render(<Profile />);
-    await waitFor(() => expect(screen.getByLabelText('Full Name')).toHaveValue('Riya Sharma'));
-    expect(screen.getByLabelText('Phone Number')).toHaveValue('5551234567');
+    expect(screen.getByLabelText('Full name')).toHaveValue('Riya Sharma');
+    expect(screen.getByLabelText('Phone number')).toHaveValue('98765 43210');
+    expect(screen.getByLabelText('Email')).toBeDisabled();
+    expect(screen.getByLabelText('College ID')).toBeDisabled();
   });
 
-  test('shows the email and college ID as read-only', async () => {
-    render(<Profile />);
-    await waitFor(() => expect(screen.getByDisplayValue('riya@college.edu')).toBeDisabled());
-    expect(screen.getByDisplayValue('STU100')).toBeDisabled();
-  });
-
-  test('renders a real activity summary from existing endpoints', async () => {
-    render(<Profile />);
-    await waitFor(() => expect(screen.getByText('Total Posts')).toBeInTheDocument());
-    // 2 posts (1 Open + 1 Closed), 1 claim — from the mocked responses above.
-    expect(screen.getAllByText('2')[0]).toBeInTheDocument();
-  });
-
-  test('saves valid changes and refreshes the shared user via login()', async () => {
-    API.put.mockResolvedValue({ data: { ...mockUser, name: 'Riya S.', phone: '5559999999' } });
+  test('"Save changes" stays disabled until something changes', async () => {
     const user = userEvent.setup();
     render(<Profile />);
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
+    await user.type(screen.getByLabelText('Full name'), 'a');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+  });
 
-    await waitFor(() => expect(screen.getByLabelText('Full Name')).toHaveValue('Riya Sharma'));
-    await user.clear(screen.getByLabelText('Full Name'));
-    await user.type(screen.getByLabelText('Full Name'), 'Riya S.');
-    await user.click(screen.getByRole('button', { name: /Save Changes/i }));
-
-    await waitFor(() => expect(API.put).toHaveBeenCalledWith('/auth/profile', { name: 'Riya S.', phone: '5551234567' }));
-    expect(mockLogin).toHaveBeenCalledWith({ ...mockUser, name: 'Riya S.', phone: '5559999999' });
-    expect(mockShowToast).toHaveBeenCalledWith('Profile updated.', 'success');
+  test('saves trimmed changes and refreshes the shared user', async () => {
+    API.put.mockResolvedValue({ data: { ...currentUser, name: 'Riya S' } });
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.clear(screen.getByLabelText('Full name'));
+    await user.type(screen.getByLabelText('Full name'), '  Riya S  ');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(API.put).toHaveBeenCalledWith('/auth/profile', { name: 'Riya S', phone: '98765 43210' }));
+    expect(mockLogin).toHaveBeenCalledWith(expect.objectContaining({ name: 'Riya S' }));
   });
 
   test('rejects an invalid phone number before calling the API', async () => {
     const user = userEvent.setup();
     render(<Profile />);
-
-    await waitFor(() => expect(screen.getByLabelText('Phone Number')).toHaveValue('5551234567'));
-    await user.clear(screen.getByLabelText('Phone Number'));
-    await user.type(screen.getByLabelText('Phone Number'), 'abc');
-    await user.click(screen.getByRole('button', { name: /Save Changes/i }));
-
-    expect(screen.getByRole('alert')).toHaveTextContent(/valid phone number/i);
+    await user.clear(screen.getByLabelText('Phone number'));
+    await user.type(screen.getByLabelText('Phone number'), 'abc');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/valid phone/i);
     expect(API.put).not.toHaveBeenCalled();
+  });
+
+  test('changes the password with the current one, then clears the form', async () => {
+    API.put.mockResolvedValue({ data: {} });
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.type(screen.getByLabelText('Current password'), 'old-password');
+    await user.type(screen.getByLabelText('New password'), 'new-password-1');
+    await user.click(screen.getByRole('button', { name: 'Update password' }));
+    await waitFor(() => expect(API.put).toHaveBeenCalledWith('/auth/password', { currentPassword: 'old-password', newPassword: 'new-password-1' }));
+    await waitFor(() => expect(screen.getByLabelText('Current password')).toHaveValue(''));
+  });
+
+  test('refuses a new password shorter than 8 characters', async () => {
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.type(screen.getByLabelText('Current password'), 'old-password');
+    await user.type(screen.getByLabelText('New password'), 'short');
+    await user.click(screen.getByRole('button', { name: 'Update password' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/at least 8/);
+    expect(API.put).not.toHaveBeenCalled();
+  });
+
+  test('shows the server error when the current password is wrong', async () => {
+    API.put.mockRejectedValue({ response: { data: { message: 'Current password is incorrect.' } } });
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.type(screen.getByLabelText('Current password'), 'nope-nope');
+    await user.type(screen.getByLabelText('New password'), 'new-password-1');
+    await user.click(screen.getByRole('button', { name: 'Update password' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Current password is incorrect.');
   });
 });

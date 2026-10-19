@@ -1,71 +1,56 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Dashboard from '../pages/Dashboard';
 
-// Mock the shared axios instance so no real network call is made.
-vi.mock('../api/axios', () => ({
-  default: { get: vi.fn() },
-}));
+vi.mock('../api/axios', () => ({ default: { get: vi.fn() } }));
 import API from '../api/axios';
 
-// Mock AuthContext so we control `user` without needing a real /auth/me call.
-vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ user: { name: 'Riya', _id: 'u1', role: 'student' } }),
-}));
+vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { _id: 'u1', name: 'Riya Sharma' } }) }));
+let notes;
+vi.mock('../context/NotificationsContext', () => ({ useNotifications: () => notes }));
 
-function renderDashboard() {
-  return render(
-    <MemoryRouter>
-      <Dashboard />
-    </MemoryRouter>
-  );
-}
+const post = (over) => ({ _id: Math.random().toString(), type: 'lost', title: 'x', status: 'Open', category: 'Other', location: 'L', description: 'd', createdAt: new Date().toISOString(), ...over });
+const renderDash = () => render(<MemoryRouter><Dashboard /></MemoryRouter>);
 
-describe('Dashboard (regression test for the loading/setLoading crash)', () => {
+describe('Dashboard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    notes = { unreadMessages: 0, claimsToReview: 0, myPendingClaims: 0 };
   });
 
-  test('shows a loading spinner first, then renders successfully with data', async () => {
-    API.get.mockImplementation((url) => {
-      if (url === '/items/my-posts') return Promise.resolve({ data: [{ status: 'Open' }, { status: 'Closed' }] });
-      if (url === '/items?limit=5') return Promise.resolve({ data: [] });
-      if (url === '/messages/conversations') return Promise.resolve({ data: [{ unreadCount: 2 }] });
-      return Promise.resolve({ data: [] });
+  test('greets the user and summarises their posts by status', async () => {
+    API.get.mockImplementation(async (url) => {
+      if (url === '/items/my-posts') return { data: [post({ status: 'Open' }), post({ status: 'Open' }), post({ status: 'Claimed' }), post({ status: 'Closed' }), post({ status: 'Closed', autoClosed: true })] };
+      return { data: { items: [post({ title: 'Latest umbrella', type: 'found' })] } };
     });
-
-    renderDashboard();
-
-    // Loading state first — this line alone would previously throw
-    // "loading is not defined" before the component could even mount.
-    expect(screen.getByText(/Loading your dashboard/i)).toBeInTheDocument();
-
-    // Then the success state, once data resolves.
-    await waitFor(() => expect(screen.getByText(/Welcome back, Riya/i)).toBeInTheDocument());
-    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    renderDash();
+    expect(screen.getByRole('heading', { name: 'Hi, Riya' })).toBeInTheDocument();
+    expect(await screen.findByText('Latest umbrella')).toBeInTheDocument();
+    const tile = (label) => screen.getByText(label).parentElement;
+    expect(tile('Your open posts')).toHaveTextContent('2');
+    expect(tile('Matched, awaiting handover')).toHaveTextContent('1');
+    expect(tile('Returned')).toHaveTextContent('1'); // the auto-expired one is not a "return"
   });
 
-  test('shows a visible error message when the API calls fail, instead of crashing', async () => {
-    API.get.mockRejectedValue(new Error('Network error'));
-
-    renderDashboard();
-
-    await waitFor(() =>
-      expect(screen.getByText(/Could not load your dashboard/i)).toBeInTheDocument()
-    );
-    // The page shell should still render around the error — it should not
-    // have crashed the whole tree.
-    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+  test('points to claims and messages that need attention', async () => {
+    notes = { unreadMessages: 2, claimsToReview: 1, myPendingClaims: 0 };
+    API.get.mockResolvedValue({ data: { items: [] } });
+    API.get.mockImplementation(async (url) => (url === '/items/my-posts' ? { data: [] } : { data: { items: [] } }));
+    renderDash();
+    expect(await screen.findByRole('link', { name: /1 claim on your items needs a decision/ })).toHaveAttribute('href', '/claims?tab=received');
+    expect(screen.getByRole('link', { name: /2 unread messages/ })).toHaveAttribute('href', '/messages');
   });
 
-  test('renders an empty/zero state gracefully when there is no data yet', async () => {
-    API.get.mockResolvedValue({ data: [] });
+  test('shows an error with a retry instead of crashing', async () => {
+    API.get.mockRejectedValueOnce({ response: { data: { message: 'Server down' } } });
+    API.get.mockRejectedValueOnce({ response: { data: { message: 'Server down' } } });
+    renderDash();
+    expect(await screen.findByText('Server down')).toBeInTheDocument();
 
-    renderDashboard();
-
-    await waitFor(() => expect(screen.getByText('Dashboard')).toBeInTheDocument());
-    // No error banner should be shown for a legitimately empty account.
-    expect(screen.queryByText(/Could not load your dashboard/i)).not.toBeInTheDocument();
+    API.get.mockImplementation(async (url) => (url === '/items/my-posts' ? { data: [] } : { data: { items: [] } }));
+    await userEvent.setup().click(screen.getByRole('button', { name: /Try again/ }));
+    expect(await screen.findByText('Nothing has been posted yet.')).toBeInTheDocument();
   });
 });

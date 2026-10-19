@@ -1,113 +1,112 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Navbar from '../components/Navbar';
 
-vi.mock('../api/axios', () => ({
-  default: { get: vi.fn() },
-}));
-import API from '../api/axios';
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async () => ({ ...(await vi.importActual('react-router-dom')), useNavigate: () => mockNavigate }));
 
-vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({
-    user: { name: 'Riya Sharma', role: 'student' },
-    isLoggedIn: () => true,
-    isAdmin: () => false,
-    logout: vi.fn().mockResolvedValue(undefined),
-  }),
-}));
+let auth;
+vi.mock('../context/AuthContext', () => ({ useAuth: () => auth }));
+let notes;
+vi.mock('../context/NotificationsContext', () => ({ useNotifications: () => notes }));
+const mockToggleTheme = vi.fn();
+vi.mock('../context/ThemeContext', () => ({ useTheme: () => ({ theme: 'light', toggleTheme: mockToggleTheme }) }));
+vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 
-vi.mock('../context/ThemeContext', () => ({
-  useTheme: () => ({ theme: 'dark', toggleTheme: vi.fn() }),
-}));
+const student = { _id: 'u1', name: 'Riya Sharma', email: 'riya@college.edu', role: 'student' };
+const setAuth = (user, extra = {}) => {
+  auth = { user, isLoggedIn: () => !!user, isAdmin: () => user?.role === 'admin', logout: vi.fn().mockResolvedValue(), ...extra };
+};
+const renderNav = (route = '/') => render(<MemoryRouter initialEntries={[route]}><Navbar /></MemoryRouter>);
 
-const mockShowToast = vi.fn();
-vi.mock('../context/ToastContext', () => ({
-  useToast: () => ({ showToast: mockShowToast }),
-}));
-
-function renderNavbar() {
-  return render(
-    <MemoryRouter>
-      <Navbar />
-    </MemoryRouter>
-  );
-}
-
-describe('Navbar notification bell (new: aggregates unread messages + pending claims)', () => {
+describe('Navbar', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    notes = { unreadMessages: 0, claimsToReview: 0, myPendingClaims: 0 };
   });
 
-  test('shows the combined badge count from unread messages and pending claims', async () => {
-    API.get.mockImplementation((url) => {
-      if (url === '/messages/conversations') return Promise.resolve({ data: [{ unreadCount: 2 }, { unreadCount: 1 }] });
-      if (url === '/claims/my-claims') return Promise.resolve({ data: [{ status: 'pending' }, { status: 'approved' }] });
-      return Promise.resolve({ data: [] });
-    });
-
-    renderNavbar();
-
-    // 2+1 unread messages + 1 pending claim (the approved one doesn't count) = 4
-    await waitFor(() => expect(screen.getByText('4')).toBeInTheDocument());
+  test('signed out: shows login and sign-up, and no member links', () => {
+    setAuth(null);
+    renderNav();
+    expect(screen.getByRole('link', { name: 'Log in' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Create account' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'My posts' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Notifications/ })).not.toBeInTheDocument();
   });
 
-  test('shows no badge and a friendly empty state when there is nothing pending', async () => {
-    API.get.mockResolvedValue({ data: [] });
+  test('signed in: shows member links and the report button', () => {
+    setAuth(student);
+    renderNav();
+    for (const name of ['Dashboard', 'Browse', 'My posts', 'Claims', 'Messages']) {
+      expect(screen.getAllByRole('link', { name: new RegExp(`^${name}`) }).length).toBeGreaterThan(0);
+    }
+    expect(screen.getAllByRole('link', { name: /Report item/ }).length).toBeGreaterThan(0);
+  });
+
+  test('the Admin link is only shown to admins', () => {
+    setAuth(student);
+    const { unmount } = renderNav();
+    expect(screen.queryByRole('link', { name: 'Admin' })).not.toBeInTheDocument();
+    unmount();
+    setAuth({ ...student, role: 'admin' });
+    renderNav();
+    expect(screen.getByRole('link', { name: 'Admin' })).toBeInTheDocument();
+  });
+
+  test('the bell combines unread messages and claims to review into one count', () => {
+    setAuth(student);
+    notes = { unreadMessages: 3, claimsToReview: 2, myPendingClaims: 1 };
+    renderNav();
+    expect(screen.getByRole('button', { name: /Notifications, 5 unread/ })).toBeInTheDocument();
+  });
+
+  test('the bell menu lists what needs attention, and says so when nothing does', async () => {
     const user = userEvent.setup();
-    renderNavbar();
+    setAuth(student);
+    notes = { unreadMessages: 1, claimsToReview: 2, myPendingClaims: 0 };
+    const { unmount } = renderNav();
+    await user.click(screen.getByRole('button', { name: /Notifications/ }));
+    expect(screen.getByRole('menuitem', { name: /1 unread message/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /2 claims to review/ })).toBeInTheDocument();
+    unmount();
 
-    await waitFor(() => expect(screen.getByLabelText('Notifications')).toBeInTheDocument());
-    await user.click(screen.getByLabelText('Notifications'));
-
+    notes = { unreadMessages: 0, claimsToReview: 0, myPendingClaims: 0 };
+    renderNav();
+    await user.click(screen.getByRole('button', { name: /Notifications/ }));
     expect(screen.getByText(/all caught up/i)).toBeInTheDocument();
   });
 
-  test('the account menu includes a link to the new Profile page', async () => {
-    API.get.mockResolvedValue({ data: [] });
+  test('the Claims and Messages links carry their own counts', () => {
+    setAuth(student);
+    notes = { unreadMessages: 4, claimsToReview: 1, myPendingClaims: 2 };
+    renderNav();
+    expect(screen.getAllByRole('link', { name: /^Messages/ })[0]).toHaveTextContent('4');
+    expect(screen.getAllByRole('link', { name: /^Claims/ })[0]).toHaveTextContent('3');
+  });
+
+  test('the current page is marked for assistive tech', () => {
+    setAuth(student);
+    renderNav('/my-posts');
+    expect(screen.getAllByRole('link', { name: 'My posts' })[0]).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('signing out calls logout and returns to the login page', async () => {
     const user = userEvent.setup();
-    renderNavbar();
-
-    await waitFor(() => expect(screen.getByText('Riya Sharma')).toBeInTheDocument());
-    await user.click(screen.getByText('Riya Sharma'));
-
-    expect(screen.getByRole('menuitem', { name: /Profile/i })).toBeInTheDocument();
+    setAuth(student);
+    renderNav();
+    await user.click(screen.getByRole('button', { name: /Account menu/ }));
+    await user.click(screen.getByRole('menuitem', { name: /Sign out/ }));
+    expect(auth.logout).toHaveBeenCalled();
+    expect(mockNavigate).toHaveBeenCalledWith('/login');
   });
 
-  test('My Claims nav link shows a pending-claims count, matching the existing Messages pattern', async () => {
-    API.get.mockImplementation((url) => {
-      if (url === '/claims/my-claims') return Promise.resolve({ data: [{ status: 'pending' }] });
-      return Promise.resolve({ data: [] });
-    });
-
-    renderNavbar();
-
-    await waitFor(() => expect(screen.getAllByText('My Claims (1)').length).toBeGreaterThan(0));
-  });
-});
-
-describe('Navbar bottom nav (new: mobile one-tap access to core actions)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    API.get.mockResolvedValue({ data: [] });
-  });
-
-  test('renders all 5 core destinations', async () => {
-    renderNavbar();
-    await waitFor(() => expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument());
-    const bottomNav = screen.getByRole('navigation', { name: 'Primary' });
-    expect(bottomNav).toHaveTextContent('Browse');
-    expect(bottomNav).toHaveTextContent('Report');
-    expect(bottomNav).toHaveTextContent('Chat');
-    expect(bottomNav).toHaveTextContent('Claims');
-    expect(bottomNav).toHaveTextContent('Profile');
-  });
-
-  test('the Report link points to /post-item and Profile to /profile', async () => {
-    renderNavbar();
-    await waitFor(() => expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument());
-    expect(screen.getByRole('navigation', { name: 'Primary' }).querySelector('a[href="/post-item"]')).toBeInTheDocument();
-    expect(screen.getByRole('navigation', { name: 'Primary' }).querySelector('a[href="/profile"]')).toBeInTheDocument();
+  test('the theme button toggles the theme', async () => {
+    const user = userEvent.setup();
+    setAuth(null);
+    renderNav();
+    await user.click(screen.getByRole('button', { name: /Switch to dark mode/ }));
+    expect(mockToggleTheme).toHaveBeenCalled();
   });
 });
