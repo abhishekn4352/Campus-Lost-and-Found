@@ -1,184 +1,155 @@
-import { useState, useEffect } from 'react';
-import { Link, Navigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Search, ShieldCheck, EyeOff, Timer, ArrowRight } from 'lucide-react';
 import API from '../api/axios';
+import { useAuth } from '../context/AuthContext';
+import { CATEGORIES, CATEGORY_ICONS } from '../constants';
+import ItemCard from '../components/ItemCard';
+import Button from '../components/Button';
+import useDocumentTitle from '../hooks/useDocumentTitle';
 
-const features = [
-  {
-    icon: '🔒',
-    title: 'OTP-Verified Claims',
-    desc: 'Every claim is verified via college email OTP. Nobody can take your item without proving ownership.'
-  },
-  {
-    icon: '⚡',
-    title: 'Real-Time Dashboard',
-    desc: 'Track your posts and claims live. See status updates the moment something changes.'
-  },
-  {
-    icon: '🔍',
-    title: 'Smart Search & Filters',
-    desc: 'Filter by category, type, and location. Find exactly what you\'re looking for, fast.'
-  },
-  {
-    icon: '📸',
-    title: 'Photo Evidence',
-    desc: 'Attach images to your reports. Visual proof makes matches and claims more reliable.'
-  },
-  {
-    icon: '🛡️',
-    title: 'Admin Oversight',
-    desc: 'Campus admins manage all items and claims, ensuring every case is handled properly.'
-  },
-  {
-    icon: '📱',
-    title: 'Fully Responsive',
-    desc: 'Works perfectly on mobile, tablet, and desktop. Report items on-the-go from anywhere.'
-  },
+const STEPS = [
+  { title: 'Post it', text: 'Say what you lost or found, where, and when. A photo helps a lot.' },
+  { title: 'Match up', text: 'Browse and search the board, or message the person who posted. Phone and email stay hidden until you both agree to share.' },
+  { title: 'Hand it over', text: 'A finder reviews each claim, so an item only goes to someone who can describe it. Then you arrange the handover in chat.' },
+];
+
+const POINTS = [
+  { icon: EyeOff, title: 'Private by default', text: 'Other students only see your name. Your phone and email are shared in a chat only if both of you choose to.' },
+  { icon: ShieldCheck, title: 'Claims are reviewed', text: 'To claim a found item you describe what only the owner would know. The finder approves or rejects it.' },
+  { icon: Timer, title: 'The board stays current', text: 'Posts close automatically after 30 days, so what you see is what is still waiting to be matched.' },
 ];
 
 export default function Home() {
+  useDocumentTitle();
   const { isLoggedIn } = useAuth();
-
-  // Real numbers from the database — previously this was a hardcoded,
-  // fake "1.2K+ Items Reunited" style row that never changed. When the
-  // sample size is too small to be meaningful (e.g. a brand-new campus
-  // deployment), the backend returns null rather than a misleading
-  // number, and this shows an honest "just getting started" placeholder
-  // instead of fabricating a rate.
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
   const [stats, setStats] = useState(null);
+  const [recent, setRecent] = useState([]);
 
   useEffect(() => {
-    API.get('/items/stats')
-      .then(({ data }) => setStats(data))
-      .catch(() => setStats(null)); // homepage still works fine without this strip
+    let alive = true;
+    Promise.allSettled([API.get('/items/stats'), API.get('/items?limit=3')]).then(([s, r]) => {
+      if (!alive) return;
+      if (s.status === 'fulfilled') setStats(s.value.data);
+      if (r.status === 'fulfilled') setRecent(r.value.data?.items || []);
+    });
+    return () => { alive = false; };
   }, []);
 
-  const statDisplay = [
-    { num: stats ? `${stats.reunited}${stats.reunited >= 100 ? '+' : ''}` : '—', lbl: 'Items Reunited' },
-    { num: stats ? `${stats.activeMembers}${stats.activeMembers >= 100 ? '+' : ''}` : '—', lbl: 'Active Members' },
-    { num: stats?.successRate != null ? `${stats.successRate}%` : 'New', lbl: 'Success Rate' },
-    { num: stats?.avgResolutionHours != null ? `${stats.avgResolutionHours}h` : '—', lbl: 'Avg. Match Time' },
-  ];
+  const submit = (e) => {
+    e.preventDefault();
+    const q = query.trim();
+    navigate(q ? `/items?q=${encodeURIComponent(q)}` : '/items');
+  };
+
+  // Show real numbers only once there is something real to show.
+  const statItems = stats && stats.reunited > 0 ? [
+    { num: stats.reunited, lbl: 'Items returned to owners' },
+    { num: stats.activeMembers, lbl: 'Verified students' },
+    stats.successRate != null && { num: `${stats.successRate}%`, lbl: 'Of posts end in a return' },
+    stats.avgResolutionHours != null && { num: `${stats.avgResolutionHours}h`, lbl: 'Average time to return' },
+  ].filter(Boolean) : [];
 
   return (
-    <div>
-      {/* Hero */}
+    <>
       <section className="hero">
-        <div className="container">
-          <div className="anim-up">
-            <div className="hero-tag">
-              <div className="hero-tag-dot" />
-              Trusted by 5000+ Students
+        <div className={`container hero-grid ${recent.length ? '' : 'solo'}`}>
+          <div>
+            <h1>Lost something on campus? Start with what’s been found.</h1>
+            <p className="hero-lede">One board for every lost and found item on campus. Search it, post to it, and get things back to their owners.</p>
+
+            <form className="hero-search" onSubmit={submit} role="search">
+              <div className="input-icon grow">
+                <Search size={20} aria-hidden="true" />
+                <input
+                  className="input" type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Black wallet, ID card, keys…" aria-label="Search lost and found items"
+                />
+              </div>
+              <Button type="submit" variant="primary">Search</Button>
+            </form>
+
+            <div className="hero-chips" aria-label="Browse by category">
+              {CATEGORIES.slice(0, 6).map((c) => {
+                const Icon = CATEGORY_ICONS[c];
+                return (
+                  <Link key={c} to={`/items?category=${encodeURIComponent(c)}`} className="chip">
+                    <Icon size={15} aria-hidden="true" />{c}
+                  </Link>
+                );
+              })}
             </div>
-            <h1 className="hero-title">
-              Lost it?<br />
-              <span className="hero-title-accent">Found.</span> Reunited.
-            </h1>
-            <p className="hero-subtitle">
-              The most advanced campus lost &amp; found portal. Secure, fast, and
-              verified through official channels.
-            </p>
-            <div className="hero-ctas">
-              <Link to="/items" className="btn btn-neon btn-lg">
-                Browse Items →
-              </Link>
-              {!isLoggedIn() && (
-                <Link to="/register" className="btn btn-ghost btn-lg">
-                  Join for Free
-                </Link>
-              )}
-              {isLoggedIn() && (
-                <Link to="/post-item" className="btn btn-violet btn-lg">
-                  + Report Item
-                </Link>
-              )}
+
+            <div className="hero-actions">
+              <Button to={isLoggedIn() ? '/post-item' : '/register'} size="lg">
+                {isLoggedIn() ? 'Report an item' : 'Create a free account'}
+              </Button>
+              <Button to="/items" variant="ghost" size="lg">Browse all items<ArrowRight size={18} aria-hidden="true" /></Button>
             </div>
           </div>
+
+          {recent.length > 0 && (
+            <div className="board" aria-label="Recently posted items">
+              {recent.map((item) => <ItemCard key={item._id} item={item} compact />)}
+            </div>
+          )}
         </div>
       </section>
 
-      {/* Stats Strip */}
-      <div className="stats-strip">
+      {statItems.length > 0 && (
+        <section className="section section-alt" aria-label="Campus results">
+          <div className="container stats">
+            {statItems.map((s) => (
+              <div key={s.lbl}><div className="num">{s.num}</div><div className="lbl">{s.lbl}</div></div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="section">
         <div className="container">
-          <div className="row text-center">
-            {statDisplay.map((s, i) => (
-              <div className="col-6 col-md-3" key={i}>
-                <div className={`stat-item anim-up delay-${i + 1}`}>
-                  <div className="stat-num">{s.num}</div>
-                  <div className="stat-lbl">{s.lbl}</div>
-                </div>
+          <div className="section-head">
+            <h2>How it works</h2>
+            <p>Three steps from “I lost it” to “I’ve got it back”.</p>
+          </div>
+          <ol className="steps" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {STEPS.map((s) => (
+              <li className="step" key={s.title}><h3>{s.title}</h3><p>{s.text}</p></li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section className="section section-alt">
+        <div className="container">
+          <div className="section-head"><h2>Built so it’s safe to use</h2></div>
+          <div className="points">
+            {POINTS.map(({ icon: Icon, title, text }) => (
+              <div className="point" key={title}>
+                <span className="pt-icon"><Icon size={22} aria-hidden="true" /></span>
+                <div><h3>{title}</h3><p>{text}</p></div>
               </div>
             ))}
           </div>
         </div>
-      </div>
-
-      {/* Features */}
-      <section style={{ padding: '72px 0' }}>
-        <div className="container">
-          <div style={{ textAlign: 'center', marginBottom: '48px' }}>
-            <div className="pg-kicker">Why Choose Us</div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.6rem, 4vw, 2.4rem)', fontWeight: 800, letterSpacing: '-0.03em', margin: '6px 0 12px' }}>
-              Built for campus life
-            </h2>
-            <p style={{ color: 'var(--text-3)', maxWidth: '480px', margin: '0 auto', fontSize: '0.95rem', fontWeight: 300 }}>
-              Every feature is designed with students in mind — simple, secure, and effective.
-            </p>
-          </div>
-
-          <div className="row g-3">
-            {features.map((f, i) => (
-              <div className="col-md-6 col-lg-4" key={i}>
-                <div className={`feature-card anim-up delay-${(i % 5) + 1}`}>
-                  <div className="feature-icon">{f.icon}</div>
-                  <div className="feature-title">{f.title}</div>
-                  <div className="feature-desc">{f.desc}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       </section>
 
-      {/* CTA Band */}
-      <section style={{ padding: '48px 0 80px' }}>
+      <section className="section">
         <div className="container">
-          <div style={{
-            background: 'linear-gradient(135deg, rgba(0,229,255,0.07) 0%, rgba(124,58,237,0.1) 100%)',
-            border: '1px solid var(--border-active)',
-            borderRadius: '20px',
-            padding: '52px 40px',
-            textAlign: 'center',
-            position: 'relative',
-            overflow: 'hidden'
-          }}>
-            <div style={{ position: 'absolute', top: '-80px', left: '50%', transform: 'translateX(-50%)', width: '400px', height: '200px', background: 'radial-gradient(ellipse, rgba(0,229,255,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(1.4rem, 4vw, 2rem)', fontWeight: 800, letterSpacing: '-0.03em', marginBottom: '12px' }}>
-              Missing something?
-            </h2>
-            <p style={{ color: 'var(--text-3)', marginBottom: '28px', maxWidth: '400px', margin: '0 auto 28px', fontWeight: 300 }}>
-              Post a report in under 2 minutes and let 5000+ students help you find it.
-            </p>
-            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              {isLoggedIn() ? (
-                <>
-                  <Link to="/post-item" className="btn btn-neon btn-lg">Report Lost Item</Link>
-                  <Link to="/items" className="btn btn-ghost btn-lg">Browse Found Items</Link>
-                </>
-              ) : (
-                <>
-                  <Link to="/register" className="btn btn-neon btn-lg">Get Started Free</Link>
-                  <Link to="/items" className="btn btn-ghost btn-lg">Browse Items</Link>
-                </>
-              )}
+          <div className="cta">
+            <h2>Missing something right now?</h2>
+            <p>Posting takes about a minute. The sooner it’s on the board, the sooner someone can spot it.</p>
+            <div className="row row-wrap" style={{ justifyContent: 'center' }}>
+              <Button to={isLoggedIn() ? '/post-item' : '/register'} variant="primary" size="lg">
+                {isLoggedIn() ? 'Report a lost item' : 'Get started'}
+              </Button>
+              <Button to="/items" size="lg" variant="secondary">Browse found items</Button>
             </div>
           </div>
         </div>
       </section>
-
-      <footer>
-        <p>© 2026 Campus L&amp;F Portal — Built for the future of student communities</p>
-      </footer>
-    </div>
+    </>
   );
 }

@@ -1,231 +1,149 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { getErrorMessage } from '../utils/errorMessage';
+import useCooldown from '../hooks/useCooldown';
+import useDocumentTitle from '../hooks/useDocumentTitle';
 import PasswordInput from '../components/PasswordInput';
+import OtpInput from '../components/OtpInput';
+import Button from '../components/Button';
+import { Alert } from '../components/States';
 import API from '../api/axios';
 
-const RESEND_COOLDOWN_SECONDS = 30;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^[0-9+\-\s()]{7,20}$/;
+const MIN_PASSWORD = 8;
 
 export default function Register() {
-  const [step, setStep] = useState(1); // 1: Email, 2: OTP & Details
+  useDocumentTitle('Create account');
+  const [step, setStep] = useState(1); // 1: email, 2: code + details
   const [form, setForm] = useState({ name: '', email: '', password: '', confirmPassword: '', phone: '', collegeId: '', otp: '' });
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  const [cooldown, startCooldown] = useCooldown(30);
   const { login } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const cooldownRef = useRef(null);
 
-  useEffect(() => () => clearInterval(cooldownRef.current), []);
-
-  const startCooldown = () => {
-    setCooldown(RESEND_COOLDOWN_SECONDS);
-    clearInterval(cooldownRef.current);
-    cooldownRef.current = setInterval(() => {
-      setCooldown((c) => {
-        if (c <= 1) { clearInterval(cooldownRef.current); return 0; }
-        return c - 1;
-      });
-    }, 1000);
-  };
-
-  const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
+  const field = (name) => (e) => setForm((f) => ({ ...f, [name]: e.target.value }));
 
   const requestOtp = async () => {
     const email = form.email.trim();
-    if (!email) { setError('Email is required'); return false; }
-    if (!EMAIL_RE.test(email)) { setError('Please enter a valid email address.'); return false; }
-    setLoading(true);
-    setError('');
+    if (!email) { setError('Enter your email address.'); return false; }
+    if (!EMAIL_RE.test(email)) { setError('Enter a valid email address.'); return false; }
+    setLoading(true); setError('');
     try {
       await API.post('/auth/request-otp', { email, purpose: 'register' });
-      setForm(f => ({ ...f, email, otp: '' })); // clear any stale OTP from a previous send
-      setSuccess('OTP verification code sent to your email.');
+      setForm((f) => ({ ...f, email, otp: '' }));
+      setInfo(`We sent a 6-digit code to ${email}.`);
       startCooldown();
       return true;
     } catch (err) {
-      setError(getErrorMessage(err, 'Failed to send verification code.'));
+      setError(getErrorMessage(err, 'We couldn’t send the code.'));
       return false;
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRequestOTP = async (e) => {
+  const handleEmailStep = async (e) => {
     e.preventDefault();
     if (await requestOtp()) setStep(2);
   };
 
-  const handleResendOTP = async () => {
-    if (cooldown > 0) return;
-    setSuccess('');
-    await requestOtp();
-  };
-
-  const validateStep2 = () => {
-    if (form.otp.length !== 6) return 'Please enter the full 6-digit code.';
-    if (!form.name.trim()) return 'Full name is required.';
-    if (form.password.length < 6) return 'Password must be at least 6 characters.';
+  const validate = () => {
+    if (form.otp.length !== 6) return 'Enter the full 6-digit code.';
+    if (!form.name.trim()) return 'Enter your full name.';
+    if (form.password.length < MIN_PASSWORD) return `Choose a password of at least ${MIN_PASSWORD} characters.`;
     if (form.password !== form.confirmPassword) return 'Passwords do not match.';
-    if (!PHONE_RE.test(form.phone.trim())) return 'Please enter a valid phone number.';
-    if (!form.collegeId.trim()) return 'College ID is required.';
+    if (!PHONE_RE.test(form.phone.trim())) return 'Enter a valid phone number.';
+    if (!form.collegeId.trim()) return 'Enter your college ID.';
     return null;
   };
 
   const handleRegister = async (e) => {
     e.preventDefault();
-    const validationError = validateStep2();
-    if (validationError) return setError(validationError);
-
-    setLoading(true);
-    setError('');
+    const problem = validate();
+    if (problem) return setError(problem);
+    setLoading(true); setError('');
     try {
       const { data } = await API.post('/auth/register-verify', {
-        name: form.name.trim(),
-        email: form.email.trim(),
-        password: form.password,
-        phone: form.phone.trim(),
-        collegeId: form.collegeId.trim(),
-        otp: form.otp,
+        name: form.name.trim(), email: form.email.trim(), password: form.password,
+        phone: form.phone.trim(), collegeId: form.collegeId.trim(), otp: form.otp,
       });
       login(data.user);
-      showToast(`Welcome to Campus L&F, ${data.user.name.split(' ')[0]}!`, 'success');
-      navigate('/dashboard');
+      showToast(`Welcome, ${data.user.name.split(' ')[0]}!`, 'success');
+      navigate('/dashboard', { replace: true });
     } catch (err) {
-      setError(getErrorMessage(err, 'Verification or registration failed.'));
-    } finally {
+      setError(getErrorMessage(err, 'We couldn’t create your account.'));
       setLoading(false);
     }
   };
 
-  return (
-    <div className="auth-page">
-      <div className="auth-card anim-up" style={{ maxWidth: 460 }}>
-        <div className="auth-icon-wrap">🎓</div>
-        <h2 className="auth-h">{step === 1 ? 'Join the community' : 'Complete profile'}</h2>
-        <p className="auth-h-sub" style={{ textAlign: 'center', color: 'var(--text-3)', fontSize: '0.9rem', marginBottom: '24px' }}>
-          {step === 1 ? 'Verify your campus email to start' : 'Almost there! Set your account details'}
-        </p>
+  const mismatch = form.confirmPassword && form.password !== form.confirmPassword;
 
-        {error && <div className="alert-box alert-err" role="alert"><span>⚠️</span> {error}</div>}
-        {success && <div className="alert-box alert-ok" role="status"><span>✅</span> {success}</div>}
+  return (
+    <div className="auth">
+      <div className="auth-card" style={{ maxWidth: 480 }}>
+        <h1>{step === 1 ? 'Create your account' : 'Finish setting up'}</h1>
+        <p className="page-sub">{step === 1 ? 'Verify your email to get started. It takes a minute.' : 'Enter the code we emailed you, then your details.'}</p>
+
+        {error && <Alert type="error">{error}</Alert>}
+        {info && step === 2 && <Alert type="success">{info}</Alert>}
 
         {step === 1 ? (
-          <form onSubmit={handleRequestOTP} noValidate>
+          <form onSubmit={handleEmailStep} noValidate>
             <div className="field">
-              <label className="field-label" htmlFor="reg-email">Campus Email Address</label>
-              <input 
-                id="reg-email"
-                type="email" 
-                className="inp" 
-                name="email" 
-                value={form.email} 
-                onChange={handleChange} 
-                placeholder="you@college.edu" 
-                autoComplete="email"
-                required 
-              />
+              <label className="label" htmlFor="reg-email">Email address</label>
+              <div className="input-icon">
+                <Mail size={18} aria-hidden="true" />
+                <input id="reg-email" type="email" className="input" value={form.email} onChange={field('email')} placeholder="you@college.edu" autoComplete="email" required />
+              </div>
+              <span className="hint">Use the email you check most. We’ll send a code to confirm it.</span>
             </div>
-            <button type="submit" className="btn btn-neon btn-full btn-lg" style={{ marginTop: '8px' }} disabled={loading} aria-busy={loading}>
-              {loading ? 'Sending...' : 'Send Verification Code →'}
-            </button>
+            <Button type="submit" variant="primary" size="lg" block loading={loading}>Send verification code</Button>
           </form>
         ) : (
           <form onSubmit={handleRegister} noValidate>
             <div className="field">
-              <label className="field-label" htmlFor="reg-otp">Verification Code (OTP)</label>
-              <input 
-                id="reg-otp"
-                type="text" 
-                className="inp" 
-                name="otp" 
-                value={form.otp} 
-                onChange={e => setForm(f => ({ ...f, otp: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
-                maxLength={6} 
-                placeholder="Enter 6-digit code" 
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                pattern="[0-9]*"
-                style={{ textAlign: 'center', letterSpacing: '0.4em', fontWeight: 700 }}
-                required 
-              />
-              <div className="otp-resend-row" style={{ textAlign: 'left', marginTop: 8 }}>
-                {cooldown > 0
-                  ? <>Didn't get it? Resend in {cooldown}s</>
-                  : <>Didn't get it?{' '}
-                      <button type="button" className="otp-resend-btn" onClick={handleResendOTP} disabled={loading}>Resend code</button>
-                    </>}
-              </div>
+              <span className="label" style={{ textAlign: 'center' }}>Verification code</span>
+              <OtpInput value={form.otp} onChange={(otp) => setForm((f) => ({ ...f, otp }))} autoFocus />
+              <p className="hint" style={{ textAlign: 'center' }}>
+                {cooldown > 0 ? `Request a new code in ${cooldown}s.` : (
+                  <>Didn’t get it? <button type="button" className="link-btn" onClick={() => { setInfo(''); requestOtp().then((ok) => ok && setInfo(`We sent a new code to ${form.email}.`)); }} disabled={loading}>Send a new code</button></>
+                )}
+              </p>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '22px 0 16px' }}>
-              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-              <span style={{ fontSize: '0.68rem', color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: 'var(--font-display)' }}>Your Details</span>
-              <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-            </div>
+            <div className="divider">Your details</div>
 
             <div className="field">
-              <label className="field-label" htmlFor="reg-name">Full Name</label>
-              <input id="reg-name" type="text" className="inp" name="name" value={form.name} onChange={handleChange} placeholder="John Doe" autoComplete="name" required />
+              <label className="label" htmlFor="reg-name">Full name</label>
+              <input id="reg-name" className="input" value={form.name} onChange={field('name')} placeholder="Riya Sharma" autoComplete="name" maxLength={80} required />
             </div>
 
-            <PasswordInput
-              label="Set Password"
-              name="password"
-              value={form.password}
-              onChange={handleChange}
-              placeholder="Min 6 characters"
-              autoComplete="new-password"
-            />
+            <PasswordInput label="Password" name="password" value={form.password} onChange={field('password')} placeholder={`At least ${MIN_PASSWORD} characters`} autoComplete="new-password" showStrength />
+            <PasswordInput label="Confirm password" name="confirmPassword" value={form.confirmPassword} onChange={field('confirmPassword')} placeholder="Re-enter your password" autoComplete="new-password" error={mismatch ? 'Passwords do not match.' : undefined} />
 
-            <PasswordInput
-              label="Confirm Password"
-              name="confirmPassword"
-              value={form.confirmPassword}
-              onChange={handleChange}
-              placeholder="Re-enter your password"
-              autoComplete="new-password"
-            />
-            {form.confirmPassword && (
-              <p style={{ marginTop: -10, marginBottom: 14, fontSize: '0.78rem', color: form.password === form.confirmPassword ? '#6ee7b7' : '#fca5a5' }}>
-                {form.password === form.confirmPassword ? '✓ Passwords match' : '✗ Passwords do not match'}
-              </p>
-            )}
-
-            <div className="row g-2">
-              <div className="col-md-6">
-                <div className="field">
-                  <label className="field-label" htmlFor="reg-phone">Phone Number</label>
-                  <input id="reg-phone" type="tel" className="inp" name="phone" value={form.phone} onChange={handleChange} placeholder="+1..." autoComplete="tel" required />
-                </div>
-              </div>
-              <div className="col-md-6">
-                <div className="field">
-                  <label className="field-label" htmlFor="reg-collegeid">College ID</label>
-                  <input id="reg-collegeid" type="text" className="inp" name="collegeId" value={form.collegeId} onChange={handleChange} placeholder="STU..." required />
-                </div>
-              </div>
+            <div className="field">
+              <label className="label" htmlFor="reg-phone">Phone number</label>
+              <input id="reg-phone" type="tel" className="input" value={form.phone} onChange={field('phone')} placeholder="98765 43210" autoComplete="tel" required />
+              <span className="hint">Never shown to others unless you choose to share it in a chat.</span>
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="reg-collegeid">College ID</label>
+              <input id="reg-collegeid" className="input" value={form.collegeId} onChange={field('collegeId')} placeholder="Your student ID" maxLength={40} required />
             </div>
 
-            <button type="submit" className="btn btn-neon btn-full btn-lg" style={{ marginTop: '14px' }} disabled={loading} aria-busy={loading}>
-              {loading ? 'Finishing...' : 'Verify & Create Account'}
-            </button>
-            <button type="button" className="btn btn-ghost btn-full btn-sm" style={{ marginTop: '10px' }} onClick={() => { setStep(1); setError(''); setSuccess(''); }} disabled={loading}>
-              Go Back
-            </button>
+            <Button type="submit" variant="primary" size="lg" block loading={loading}>Create account</Button>
+            <Button variant="ghost" block className="mt-2" onClick={() => { setStep(1); setError(''); setInfo(''); }} disabled={loading}>Use a different email</Button>
           </form>
         )}
 
-        <p className="auth-foot" style={{ marginTop: '24px' }}>
-          Already have an account?{' '}
-          <Link to="/login" className="auth-link">Sign in</Link>
-        </p>
+        <p className="auth-foot">Already have an account? <Link to="/login">Log in</Link></p>
       </div>
     </div>
   );

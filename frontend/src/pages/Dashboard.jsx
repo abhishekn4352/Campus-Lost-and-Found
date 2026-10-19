@@ -1,127 +1,88 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Plus, MessageCircle, Inbox, ChevronRight, HandHelping } from 'lucide-react';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
-import Spinner from '../components/Spinner';
+import { useNotifications } from '../context/NotificationsContext';
+import { getErrorMessage } from '../utils/errorMessage';
+import { plural } from '../utils/format';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import ItemCard from '../components/ItemCard';
+import Button from '../components/Button';
+import PageHeader from '../components/PageHeader';
+import { CardSkeletonGrid, ErrorState } from '../components/States';
 
 export default function Dashboard() {
+  useDocumentTitle('Dashboard');
   const { user } = useAuth();
-  const [stats, setStats] = useState({ totalPosts: 0, activeClaims: 0, resolved: 0 });
-  const [recentItems, setRecentItems] = useState([]);
-  const [totalUnread, setTotalUnread] = useState(0);
+  const { unreadMessages, claimsToReview, myPendingClaims } = useNotifications();
+  const [posts, setPosts] = useState([]);
+  const [recent, setRecent] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setError('');
-      try {
-        const [postsRes, itemsRes, convsRes] = await Promise.all([
-          API.get('/items/my-posts'),
-          API.get('/items?limit=5'),
-          API.get('/messages/conversations')
-        ]);
-        
-        // Calculate stats
-        const myPosts = postsRes.data;
-        setStats({
-          totalPosts: myPosts.length,
-          activeClaims: myPosts.filter(i => i.status === 'Open').length,
-          resolved: myPosts.filter(i => i.status === 'Closed' || i.status === 'Claimed').length
-        });
-
-        setRecentItems(itemsRes.data.slice(0, 5));
-        
-        // Calculate unread
-        const unread = convsRes.data.reduce((acc, c) => acc + (c.unreadCount || 0), 0);
-        setTotalUnread(unread);
-      } catch (err) {
-        console.error('Failed to fetch dashboard data', err);
-        setError('Could not load your dashboard right now. Please try refreshing.');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [postsRes, recentRes] = await Promise.all([API.get('/items/my-posts'), API.get('/items?limit=4')]);
+      setPosts(postsRes.data);
+      setRecent(recentRes.data?.items || []);
+    } catch (err) {
+      setError(getErrorMessage(err, 'We couldn’t load your dashboard.'));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading) return <Spinner text="Loading your dashboard..." />;
+  useEffect(() => { load(); }, [load]);
+
+  const open = posts.filter((p) => p.status === 'Open').length;
+  const waiting = posts.filter((p) => p.status === 'Claimed').length;
+  const returned = posts.filter((p) => p.status === 'Closed' && !p.autoClosed).length;
+  const firstName = user?.name?.split(' ')[0] || 'there';
+
+  const attention = [
+    claimsToReview > 0 && { to: '/claims?tab=received', icon: Inbox, text: `${plural(claimsToReview, 'claim')} on your items ${claimsToReview === 1 ? 'needs' : 'need'} a decision` },
+    unreadMessages > 0 && { to: '/messages', icon: MessageCircle, text: `${plural(unreadMessages, 'unread message')}` },
+    myPendingClaims > 0 && { to: '/claims', icon: HandHelping, text: `${plural(myPendingClaims, 'claim')} you sent ${myPendingClaims === 1 ? 'is' : 'are'} waiting for a reply` },
+  ].filter(Boolean);
 
   return (
-    <div className="page-wrap">
-      <div className="pg-header">
-        <div className="pg-kicker">Welcome back, {user?.name}</div>
-        <h1 className="pg-title">Dashboard</h1>
-        <p className="pg-sub">Manage your items and track your activity</p>
-      </div>
+    <div className="container page">
+      <PageHeader title={`Hi, ${firstName}`} subtitle="Here’s what needs your attention.">
+        <Button to="/post-item" variant="primary" icon={Plus}>Report an item</Button>
+      </PageHeader>
 
-      {error && (
-        <div className="alert-box alert-err" style={{ marginBottom: '24px' }}>⚠️ {error}</div>
-      )}
-
-      {totalUnread > 0 && (
-        <div className="anim-in" style={{ marginBottom: '32px' }}>
-          <Link to="/messages" className="alert-box alert-warn" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textDecoration: 'none' }}>
-            <span>📧 You have <strong>{totalUnread}</strong> unread message{totalUnread > 1 ? 's' : ''}. Check your conversations to coordinate returns.</span>
-            <span style={{ fontSize: '1.2rem' }}>→</span>
-          </Link>
+      {attention.length > 0 && (
+        <div className="attention">
+          {attention.map(({ to, icon: Icon, text }) => (
+            <Link key={to} to={to}><Icon size={20} aria-hidden="true" /><span>{text}</span><ChevronRight size={18} aria-hidden="true" /></Link>
+          ))}
         </div>
       )}
 
-      {/* Stats Grid */}
-      <div className="row g-3 mb-5">
-        {[
-          { label: 'My Posts', value: stats.totalPosts, icon: '📋', color: 'var(--neon)' },
-          { label: 'Active Reports', value: stats.activeClaims, icon: '🔍', color: 'var(--violet)' },
-          { label: 'Resolved Cases', value: stats.resolved, icon: '✅', color: 'var(--success)' },
-        ].map((s, i) => (
-          <div className="col-md-4" key={i}>
-            <div className="stat-card anim-up" style={{ padding: '24px', background: 'var(--ink-2)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ position: 'absolute', top: -10, right: -10, fontSize: '4rem', opacity: 0.05 }}>{s.icon}</div>
-              <div style={{ color: 'var(--text-3)', fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{s.label}</div>
-              <div style={{ fontSize: '2.5rem', fontWeight: 800, color: s.color, marginTop: '4px' }}>{s.value}</div>
-            </div>
+      {error ? (
+        <ErrorState message={error} onRetry={load} />
+      ) : (
+        <>
+          <div className="tiles">
+            <div className="tile"><div className="num">{loading ? '–' : open}</div><div className="lbl">Your open posts</div></div>
+            <div className="tile"><div className="num">{loading ? '–' : waiting}</div><div className="lbl">Matched, awaiting handover</div></div>
+            <div className="tile"><div className="num">{loading ? '–' : returned}</div><div className="lbl">Returned</div></div>
           </div>
-        ))}
-      </div>
 
-      <div className="row g-4">
-        {/* Recent Items Feed */}
-        <div className="col-lg-8">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Recently Reported</h2>
-            <Link to="/items" className="auth-link" style={{ fontSize: '0.85rem' }}>View all →</Link>
+          <div className="page-header" style={{ marginBottom: 16 }}>
+            <h2>Latest on campus</h2>
+            <Link to="/items">See all items</Link>
           </div>
-          <div className="recent-list">
-            {recentItems.length === 0 ? (
-              <p style={{ color: 'var(--text-3)' }}>No recent items reported.</p>
-            ) : (
-              recentItems.map((item, i) => (
-                <Link to={`/items/${item._id}`} key={item._id} className="recent-item-row anim-in" style={{ animationDelay: `${i * 0.1}s`, display: 'flex', gap: '16px', padding: '16px', background: 'var(--ink-2)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', marginBottom: '12px', textDecoration: 'none', color: 'inherit', transition: 'transform 0.2s' }}>
-                  <div style={{ width: '60px', height: '60px', borderRadius: '8px', overflow: 'hidden', background: 'var(--ink-3)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem' }}>
-                    {item.imageUrl ? <img src={`${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`} alt={item.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : '📦'}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: '1rem' }}>{item.title}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-3)' }}>{item.location} • {new Date(item.lostFoundDate).toLocaleDateString()}</div>
-                    <span className={`badge-pill ${item.type === 'lost' ? 'badge-lost' : 'badge-found'}`} style={{ marginTop: '6px', display: 'inline-block', fontSize: '0.65rem' }}>{item.type}</span>
-                  </div>
-                </Link>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="col-lg-4">
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '20px' }}>Quick Actions</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <Link to="/post-item" className="btn btn-neon btn-lg btn-full" style={{ textAlign: 'center' }}>+ Report Lost/Found Item</Link>
-            <Link to="/my-posts" className="btn btn-ghost btn-lg btn-full" style={{ textAlign: 'center' }}>Manage My Posts</Link>
-            <Link to="/my-claims" className="btn btn-ghost btn-lg btn-full" style={{ textAlign: 'center' }}>Track My Claims</Link>
-          </div>
-        </div>
-      </div>
+          {loading ? <CardSkeletonGrid count={4} /> : recent.length === 0 ? (
+            <p className="muted">Nothing has been posted yet.</p>
+          ) : (
+            <div className="grid-cards">{recent.map((item) => <ItemCard key={item._id} item={item} />)}</div>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -1,146 +1,99 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { Check, X } from 'lucide-react';
 import API from '../../api/axios';
-import Spinner from '../../components/Spinner';
-import { AdminNav } from './AdminDashboard';
 import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { getErrorMessage } from '../../utils/errorMessage';
+import { formatDate } from '../../utils/format';
+import useDocumentTitle from '../../hooks/useDocumentTitle';
+import PageHeader from '../../components/PageHeader';
+import AdminNav from '../../components/AdminNav';
+import Button from '../../components/Button';
+import Pagination from '../../components/Pagination';
+import { StatusBadge } from '../../components/Badge';
+import { EmptyState, ErrorState, PageLoader } from '../../components/States';
 
 export default function AdminClaims() {
-  const [claims, setClaims]   = useState([]);
+  useDocumentTitle('Admin · Claims');
+  const { showToast } = useToast();
+  const confirm = useConfirm();
+  const [data, setData] = useState({ claims: [], total: 0, pages: 1 });
+  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [acting, setActing]   = useState(null);
-  const { showToast } = useToast();
+  const [busyId, setBusyId] = useState(null);
 
-  useEffect(() => {
-    API.get('/admin/claims')
-      .then(({ data }) => { setClaims(data); setLoading(false); })
-      .catch((err) => { setError(getErrorMessage(err, 'Could not load claims.')); setLoading(false); });
-  }, []);
-
-  const handleApprove = async id => {
-    setActing(id + '-approve');
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      await API.put(`/admin/claims/${id}/approve`);
-      setClaims(claims.map(c => c._id === id ? { ...c, status: 'approved' } : c));
-      showToast('Claim approved.', 'success');
-    } catch (err) { showToast(getErrorMessage(err, 'Failed to approve.'), 'error'); }
-    finally { setActing(null); }
-  };
+      const { data: res } = await API.get('/admin/claims', { params: { status: status || undefined, page, limit: 20 } });
+      setData(res);
+    } catch (err) { setError(getErrorMessage(err, 'We couldn’t load claims.')); }
+    finally { setLoading(false); }
+  }, [status, page]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [status]);
 
-  const handleReject = async id => {
-    if (!window.confirm('Reject this claim?')) return;
-    setActing(id + '-reject');
+  const act = async (claim, action) => {
+    const approve = action === 'approve';
+    const ok = await confirm({
+      title: approve ? 'Approve this claim?' : 'Reject this claim?',
+      message: approve ? `${claim.claimedBy?.name} will be confirmed as the owner of “${claim.itemId?.title}”.` : 'The claimant will be told it wasn’t approved.',
+      confirmLabel: approve ? 'Approve' : 'Reject', danger: !approve,
+    });
+    if (!ok) return;
+    setBusyId(claim._id);
     try {
-      await API.put(`/admin/claims/${id}/reject`);
-      setClaims(claims.map(c => c._id === id ? { ...c, status: 'rejected' } : c));
-      showToast('Claim rejected.', 'success');
-    } catch (err) { showToast(getErrorMessage(err, 'Failed to reject.'), 'error'); }
-    finally { setActing(null); }
+      await API.put(`/admin/claims/${claim._id}/${action}`);
+      showToast(approve ? 'Claim approved.' : 'Claim rejected.', 'success');
+      await load();
+    } catch (err) { showToast(getErrorMessage(err, 'That action failed.'), 'error'); }
+    finally { setBusyId(null); }
   };
-
-  if (loading) return <Spinner text="Loading claims…" />;
-
-  const pendingCount = claims.filter(c => c.status === 'pending').length;
 
   return (
-    <div className="page-wrap">
-      <div className="pg-header">
-        <div className="pg-kicker">Admin</div>
-        <h1 className="pg-title">
-          Manage Claims
-          {pendingCount > 0 && (
-            <span className="result-count" style={{ background: 'rgba(245,158,11,0.15)', color: 'var(--amber)', borderColor: 'rgba(245,158,11,0.3)' }}>
-              {pendingCount} pending
-            </span>
-          )}
-        </h1>
-        <p className="pg-sub">Review and process item claims — {claims.length} total</p>
-      </div>
-
+    <div className="container page">
+      <PageHeader title="Claims" subtitle={`${data.total} claim${data.total === 1 ? '' : 's'} shown.`} />
       <AdminNav />
 
-      {error && <div className="alert-box alert-err" role="alert" style={{ marginBottom: 20 }}>⚠️ {error}</div>}
+      <div className="seg" role="group" aria-label="Filter by status" style={{ marginBottom: 20, maxWidth: 560 }}>
+        {[['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['', 'All']].map(([v, l]) => (
+          <button key={l} type="button" aria-pressed={status === v} onClick={() => setStatus(v)}>{l}</button>
+        ))}
+      </div>
 
-      {claims.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">🙋</div>
-          <div className="empty-state-title">No claims yet</div>
-          <p className="empty-state-sub">No claims have been submitted yet.</p>
-        </div>
+      {loading ? <PageLoader text="Loading claims…" /> : error ? <ErrorState message={error} onRetry={load} /> : data.claims.length === 0 ? (
+        <EmptyState title="No claims here">Nothing matches this filter right now.</EmptyState>
       ) : (
-        <div className="tbl-wrap anim-in">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th>Owner</th>
-                <th>Claimed By</th>
-                <th>OTP</th>
-                <th>Status</th>
-                <th>Date</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claims.map(claim => (
-                <tr key={claim._id}>
-                  <td>
-                    <div style={{ fontWeight: 700, fontFamily: 'var(--font-display)', fontSize: '0.875rem', color: 'var(--text)' }}>
-                      {claim.itemId?.title || 'N/A'}
-                    </div>
-                    {claim.itemId?.type && (
-                      <span className={`badge-pill ${claim.itemId.type === 'lost' ? 'badge-lost' : 'badge-found'}`} style={{ marginTop: 4, display: 'inline-flex' }}>
-                        {claim.itemId.type}
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text)' }}>{claim.itemId?.postedBy?.name || '—'}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{claim.itemId?.postedBy?.email}</div>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text)' }}>{claim.claimedBy?.name}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{claim.claimedBy?.email}</div>
-                    {claim.itemId?.postedBy?._id && claim.claimedBy?._id === claim.itemId.postedBy._id && (
-                      <div style={{ fontSize: '0.68rem', color: 'var(--amber)', marginTop: 2 }}>⚠️ Same as owner</div>
-                    )}
-                  </td>
-                  <td>
-                    {claim.otpVerified
-                      ? <span className="badge-pill badge-verified">✓ Verified</span>
-                      : <span className="badge-pill badge-pending">⏳ Pending</span>
-                    }
-                  </td>
-                  <td><span className={`badge-pill badge-${claim.status}`}>{claim.status}</span></td>
-                  <td style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>{new Date(claim.createdAt).toLocaleDateString()}</td>
-                  <td style={{ textAlign: 'right' }}>
-                    {claim.status === 'pending' ? (
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                        <button
-                          className="btn btn-success-soft btn-sm"
-                          onClick={() => handleApprove(claim._id)}
-                          disabled={acting === claim._id + '-approve'}
-                        >
-                          {acting === claim._id + '-approve' ? '…' : '✅ Approve'}
-                        </button>
-                        <button
-                          className="btn btn-danger-soft btn-sm"
-                          onClick={() => handleReject(claim._id)}
-                          disabled={acting === claim._id + '-reject'}
-                        >
-                          {acting === claim._id + '-reject' ? '…' : '❌ Reject'}
-                        </button>
-                      </div>
-                    ) : (
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-3)' }}>—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Item</th><th>Claimant</th><th>Their explanation</th><th>Status</th><th>Sent</th><th className="t-right">Actions</th></tr></thead>
+              <tbody>
+                {data.claims.map((claim) => (
+                  <tr key={claim._id}>
+                    <td style={{ fontWeight: 600 }}>{claim.itemId?.title || 'Removed item'}<div className="cell-sub">Posted by {claim.itemId?.postedBy?.name || '—'}</div></td>
+                    <td>{claim.claimedBy?.name}<div className="cell-sub">{claim.claimedBy?.email}</div></td>
+                    <td style={{ maxWidth: 320, whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{claim.message}</td>
+                    <td><StatusBadge status={claim.status} /></td>
+                    <td>{formatDate(claim.createdAt)}</td>
+                    <td className="t-right">
+                      {claim.status === 'pending' ? (
+                        <div className="list-actions">
+                          <Button size="sm" variant="success" icon={Check} disabled={busyId === claim._id} onClick={() => act(claim, 'approve')}>Approve</Button>
+                          <Button size="sm" variant="danger" icon={X} disabled={busyId === claim._id} onClick={() => act(claim, 'reject')}>Reject</Button>
+                        </div>
+                      ) : <span className="muted">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={data.page || page} pages={data.pages} onChange={setPage} />
+        </>
       )}
     </div>
   );

@@ -1,184 +1,199 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { ArrowLeft, Send, Lock, Handshake, ExternalLink, MessageCircle } from 'lucide-react';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useNotifications } from '../context/NotificationsContext';
 import { getErrorMessage } from '../utils/errorMessage';
-import Spinner from '../components/Spinner';
+import { formatTime } from '../utils/format';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import Button from '../components/Button';
+import { EmptyState, ErrorState, PageLoader } from '../components/States';
+
+const POLL_MS = 6000;
+const dayLabel = (d) => new Date(d).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
 
 export default function ChatWindow() {
   const { id: convId } = useParams();
   const { user } = useAuth();
   const { showToast } = useToast();
-  const [messages, setMessages] = useState([]);
+  const { refresh: refreshNotifications } = useNotifications();
   const [conversation, setConversation] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
-  const [sharing, setSharing] = useState(false);
+  const [error, setError] = useState('');
+  const [missing, setMissing] = useState(false);
   const [sending, setSending] = useState(false);
-  const scrollRef = useRef();
+  const [sharing, setSharing] = useState(false);
+  const bodyRef = useRef(null);
+  const stickToBottom = useRef(true);
+  const lastTimestamp = useRef(null);
 
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 5000); // Poll every 5 seconds for basic "neat working" real-time
-    return () => clearInterval(interval);
+  useDocumentTitle(conversation?.itemId?.title ? `Chat · ${conversation.itemId.title}` : 'Chat');
+
+  const mergeMessages = useCallback((incoming) => {
+    if (!incoming.length) return;
+    setMessages((prev) => {
+      const seen = new Set(prev.map((m) => m._id));
+      const fresh = incoming.filter((m) => !seen.has(m._id));
+      return fresh.length ? [...prev, ...fresh] : prev;
+    });
+    lastTimestamp.current = incoming[incoming.length - 1].createdAt;
+  }, []);
+
+  const loadConversation = useCallback(async () => {
+    const { data } = await API.get(`/messages/conversations/${convId}`);
+    setConversation(data);
   }, [convId]);
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const fetchData = async () => {
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    setMissing(false);
     try {
-      const [msgRes, convsRes] = await Promise.all([
-        API.get(`/messages/${convId}`),
-        API.get('/messages/conversations')
-      ]);
+      const [, msgRes] = await Promise.all([loadConversation(), API.get(`/messages/${convId}`)]);
       setMessages(msgRes.data);
-      const currentConv = convsRes.data.find(c => c._id === convId);
-      setConversation(currentConv);
+      lastTimestamp.current = msgRes.data.length ? msgRes.data[msgRes.data.length - 1].createdAt : null;
+      refreshNotifications();
     } catch (err) {
-      console.error(err);
+      if ([403, 404].includes(err.response?.status)) setMissing(true);
+      else setError(getErrorMessage(err, 'We couldn’t open this conversation.'));
     } finally {
       setLoading(false);
     }
+  }, [convId, loadConversation, refreshNotifications]);
+
+  useEffect(() => { setMessages([]); loadAll(); }, [loadAll]);
+
+  // Poll for new messages (and the other person's sharing choice) while the
+  // tab is visible. Only messages newer than the last one seen are fetched.
+  useEffect(() => {
+    if (loading || missing || error) return undefined;
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const params = lastTimestamp.current ? { after: lastTimestamp.current } : {};
+        const [msgRes] = await Promise.all([API.get(`/messages/${convId}`, { params }), loadConversation()]);
+        if (msgRes.data.length) { mergeMessages(msgRes.data); refreshNotifications(); }
+      } catch { /* a failed poll is retried on the next tick */ }
+    };
+    const t = setInterval(tick, POLL_MS);
+    return () => clearInterval(t);
+  }, [convId, loading, missing, error, loadConversation, mergeMessages, refreshNotifications]);
+
+  // Keep the view pinned to the newest message unless the reader scrolled up.
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+  }, [messages, conversation?.bothShared]);
+  const onScroll = () => {
+    const el = bodyRef.current;
+    if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    const trimmed = content.trim();
-    // Guards against both an empty send AND a rapid double-click/repeated
-    // Enter press firing the same message twice before the first request
-    // completes — previously there was no such guard on this form.
-    if (!trimmed || sending) return;
+  const send = async (e) => {
+    e?.preventDefault();
+    const text = content.trim();
+    if (!text || sending) return;
     setSending(true);
     try {
-      const otherParticipant = conversation.participants.find(p => p._id !== user._id);
-      const { data } = await API.post('/messages/send', {
-        convId,
-        itemId: conversation.itemId._id,
-        receiverId: otherParticipant._id,
-        content: trimmed
-      });
-      setMessages([...messages, data]);
+      const { data } = await API.post('/messages/send', { conversationId: convId, content: text });
+      stickToBottom.current = true;
+      mergeMessages([data]);
       setContent('');
     } catch (err) {
-      showToast(getErrorMessage(err, 'Failed to send message.'), 'error');
+      showToast(getErrorMessage(err, 'Your message wasn’t sent.'), 'error');
     } finally {
       setSending(false);
     }
   };
 
-  const handleShareToggle = async () => {
+  const onKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  };
+
+  const toggleShare = async () => {
     setSharing(true);
     try {
       await API.post('/messages/share-contact', { conversationId: convId });
-      await fetchData();
+      await loadConversation();
     } catch (err) {
-      console.error(err);
+      showToast(getErrorMessage(err, 'We couldn’t update your sharing choice.'), 'error');
     } finally {
       setSharing(false);
     }
   };
 
-  if (loading) return <Spinner text="Opening conversation..." />;
-  if (!conversation) return <div className="page-wrap"><p>Conversation not found.</p></div>;
+  if (loading) return <div className="container page"><PageLoader text="Opening conversation…" /></div>;
+  if (missing) return <div className="container container-narrow page"><EmptyState icon={MessageCircle} title="Conversation not found" action={<Button to="/messages" variant="primary">Back to messages</Button>}>It may have been removed along with its item.</EmptyState></div>;
+  if (error) return <div className="container container-narrow page"><ErrorState message={error} onRetry={loadAll} /></div>;
 
-  const otherUser = conversation.participants.find(p => p._id !== user._id);
-  const myShare = conversation.shares.find(s => s.userId === user._id || s.userId?._id === user._id);
-  const bothShared = conversation.shares.every(s => s.shared === true);
+  const other = conversation.participants.find((p) => String(p._id) !== String(user._id));
+  const myShare = conversation.shares.find((s) => String(s.userId?._id || s.userId) === String(user._id));
   const item = conversation.itemId;
+  let lastDay = '';
 
   return (
-    <div className="page-wrap chat-container" style={{ maxWidth: '800px', height: '85vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Chat Header */}
-      <div className="chat-header" style={{ padding: '16px 20px', background: 'var(--ink-2)', border: '1px solid var(--border)', borderTopLeftRadius: 'var(--radius-lg)', borderTopRightRadius: 'var(--radius-lg)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Link to="/messages" className="btn btn-ghost btn-sm" style={{ padding: '4px 8px' }}>←</Link>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>{otherUser.name}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>Talking about: <span style={{ color: 'var(--neon)' }}>{item.title}</span></div>
+    <div className="container chat-page">
+      <div className="chat">
+        <div className="chat-head">
+          <Button to="/messages" variant="ghost" size="sm" aria-label="Back to messages"><ArrowLeft size={18} aria-hidden="true" /></Button>
+          <div className="grow">
+            <div style={{ fontWeight: 700 }} className="truncate">{other?.name || 'Student'}</div>
+            <div className="muted truncate" style={{ fontSize: '0.85rem' }}>About: {item.title}</div>
           </div>
+          <Link to={`/items/${item._id}`} className="btn btn-ghost btn-sm">View item<ExternalLink size={16} aria-hidden="true" /></Link>
         </div>
-        <Link to={`/items/${item._id}`} className="btn btn-ghost btn-sm">View Item</Link>
-      </div>
 
-      {/* Messages Area */}
-      <div className="chat-messages" style={{ flexGrow: 1, overflowY: 'auto', padding: '20px', background: 'var(--ink-1)', borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        
-        {/* Contact info card if shared */}
-        {bothShared ? (
-          <div className="anim-in" style={{ padding: '16px', background: 'var(--neon-dim)', border: '2px solid var(--neon)', borderRadius: '12px', marginBottom: '20px', textAlign: 'center' }}>
-            <div style={{ fontSize: '1.2rem', marginBottom: '8px' }}>🤝 Contact Info Shared</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '8px' }}>
-                <div style={{ fontSize: '0.7rem', opacity: 0.7 }}>EMAIL</div>
-                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{otherUser.email}</div>
-              </div>
-              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '10px', borderRadius: '8px' }}>
-                <div style={{ fontSize: '0.7rem', opacity: 0.7 }}>PHONE</div>
-                <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{otherUser.phone || 'N/A'}</div>
-              </div>
+        <div className="chat-body" ref={bodyRef} onScroll={onScroll} role="log" aria-live="polite" aria-label="Messages">
+          {conversation.bothShared ? (
+            <div className="contact-card">
+              <strong><Handshake size={16} aria-hidden="true" style={{ verticalAlign: '-3px' }} /> You both shared contact details</strong>
+              <dl>
+                <div><dt>Email</dt><dd>{other?.email || '—'}</dd></div>
+                <div><dt>Phone</dt><dd>{other?.phone || '—'}</dd></div>
+              </dl>
             </div>
-          </div>
-        ) : (
-          <div style={{ textAlign: 'center', padding: '12px', background: 'var(--ink-3)', borderRadius: '10px', fontSize: '0.8rem', color: 'var(--text-3)', border: '1px dashed var(--border)', marginBottom: '10px' }}>
-            🔒 Contact information is hidden. Click "Share My Contact" to reveal details when both parties agree.
-          </div>
-        )}
-
-        {messages.map((m, i) => {
-          const isMe = m.sender === user._id || m.sender?._id === user._id;
-          return (
-            <div key={m._id} className={`chat-bubble-wrap ${isMe ? 'me' : 'them'}`} style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' }}>
-              <div className={`chat-bubble ${isMe ? 'chat-me' : 'chat-them'}`} style={{ 
-                maxWidth: '70%', 
-                padding: '10px 16px', 
-                borderRadius: '18px', 
-                background: isMe ? 'var(--neon)' : 'var(--ink-3)', 
-                color: isMe ? '#000' : 'var(--text)',
-                fontWeight: isMe ? 600 : 400,
-                fontSize: '0.95rem',
-                border: isMe ? 'none' : '1px solid var(--border)',
-                borderBottomRightRadius: isMe ? '4px' : '18px',
-                borderBottomLeftRadius: isMe ? '18px' : '4px'
-              }}>
-                {m.content}
-              </div>
-              <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', marginTop: '4px', padding: '0 8px' }}>
-                {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </div>
+          ) : (
+            <div className="privacy-card">
+              <Lock size={18} aria-hidden="true" />
+              <span>Contact details are hidden. Phone and email are shown only when <strong>both</strong> of you choose to share them.</span>
             </div>
-          );
-        })}
-        <div ref={scrollRef} />
-      </div>
+          )}
 
-      {/* Input Area */}
-      <div className="chat-footer" style={{ padding: '16px 20px', background: 'var(--ink-2)', border: '1px solid var(--border)', borderBottomLeftRadius: 'var(--radius-lg)', borderBottomRightRadius: 'var(--radius-lg)' }}>
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
-          <button 
-            onClick={handleShareToggle}
-            disabled={sharing}
-            className={`btn btn-sm ${myShare?.shared ? 'btn-success-soft' : 'btn-ghost'}`}
-            style={{ fontSize: '0.75rem', flexGrow: 1 }}
-          >
-            {myShare?.shared ? '✓ Contact Info Shared' : '🔓 Share My Contact Info'}
-          </button>
+          {messages.length === 0 && <p className="muted" style={{ textAlign: 'center', margin: 'auto' }}>No messages yet. Say hello and describe the item.</p>}
+
+          {messages.map((m) => {
+            const mine = String(m.sender?._id || m.sender) === String(user._id);
+            const day = dayLabel(m.createdAt);
+            const showDay = day !== lastDay;
+            lastDay = day;
+            return (
+              <div key={m._id} style={{ display: 'contents' }}>
+                {showDay && <div className="chat-day">{day}</div>}
+                <div className={`bubble-wrap ${mine ? 'me' : 'them'}`}>
+                  <div className="bubble">{m.content}</div>
+                  <div className="bubble-time">{formatTime(m.createdAt)}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
-          <input 
-            className="inp" 
-            placeholder="Type a message..."
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            disabled={sending}
-            style={{ borderRadius: '25px', padding: '10px 20px' }}
-          />
-          <button type="submit" className="btn btn-neon" disabled={sending || !content.trim()} style={{ borderRadius: '50%', width: '46px', height: '46px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {sending ? '…' : '➤'}
-          </button>
-        </form>
+
+        <div className="chat-foot">
+          <div style={{ marginBottom: 10 }}>
+            <Button size="sm" variant={myShare?.shared ? 'success' : 'secondary'} onClick={toggleShare} loading={sharing} aria-pressed={!!myShare?.shared}>
+              {myShare?.shared ? 'You’re sharing your contact — tap to stop' : 'Share my contact details'}
+            </Button>
+          </div>
+          <form className="chat-form" onSubmit={send}>
+            <label htmlFor="chat-input" className="sr-only">Message</label>
+            <textarea id="chat-input" className="textarea" rows={1} value={content} maxLength={2000} placeholder="Write a message…" onChange={(e) => setContent(e.target.value)} onKeyDown={onKeyDown} />
+            <Button type="submit" variant="primary" disabled={!content.trim()} loading={sending} aria-label="Send message"><Send size={18} aria-hidden="true" /></Button>
+          </form>
+        </div>
       </div>
     </div>
   );

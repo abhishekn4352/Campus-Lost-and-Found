@@ -1,126 +1,102 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { Search, Ban, UserCheck } from 'lucide-react';
 import API from '../../api/axios';
-import Spinner from '../../components/Spinner';
-import { AdminNav } from './AdminDashboard';
-
-// Small, dependency-free relative-time formatter — "just now", "5m ago",
-// "3h ago", "2d ago" — used for the new Last Active column.
-function timeAgo(dateStr) {
-  if (!dateStr) return 'Never';
-  const diffMs = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
+import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
+import { getErrorMessage } from '../../utils/errorMessage';
+import { formatDate, timeAgo, initials } from '../../utils/format';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
+import useDocumentTitle from '../../hooks/useDocumentTitle';
+import PageHeader from '../../components/PageHeader';
+import AdminNav from '../../components/AdminNav';
+import Button from '../../components/Button';
+import Pagination from '../../components/Pagination';
+import { Badge } from '../../components/Badge';
+import { EmptyState, ErrorState, PageLoader } from '../../components/States';
 
 export default function AdminUsers() {
-  const [users, setUsers]     = useState([]);
+  useDocumentTitle('Admin · Students');
+  const { showToast } = useToast();
+  const confirm = useConfirm();
+  const [data, setData] = useState({ users: [], total: 0, pages: 1 });
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const [search, setSearch]   = useState('');
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  const q = useDebouncedValue(search.trim(), 350);
 
-  useEffect(() => {
-    API.get('/admin/users')
-      .then(({ data }) => { setUsers(data); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data: res } = await API.get('/admin/users', { params: { q: q || undefined, page, limit: 20 } });
+      setData(res);
+    } catch (err) { setError(getErrorMessage(err, 'We couldn’t load students.')); }
+    finally { setLoading(false); }
+  }, [q, page]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [q]);
 
-  const filtered = users.filter(u =>
-    !search ||
-    u.name?.toLowerCase().includes(search.toLowerCase()) ||
-    u.email?.toLowerCase().includes(search.toLowerCase()) ||
-    u.collegeId?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  if (loading) return <Spinner text="Loading students…" />;
+  const toggle = async (user) => {
+    const suspending = user.isActive !== false;
+    const ok = await confirm({
+      title: suspending ? `Suspend ${user.name}?` : `Reinstate ${user.name}?`,
+      message: suspending ? 'They won’t be able to log in or use the app until you reinstate them. Their posts stay up.' : 'They’ll be able to log in again.',
+      confirmLabel: suspending ? 'Suspend account' : 'Reinstate', danger: suspending,
+    });
+    if (!ok) return;
+    setBusyId(user._id);
+    try {
+      await API.put(`/admin/users/${user._id}/status`, { isActive: !suspending });
+      showToast(suspending ? 'Account suspended.' : 'Account reinstated.', 'success');
+      await load();
+    } catch (err) { showToast(getErrorMessage(err, 'That action failed.'), 'error'); }
+    finally { setBusyId(null); }
+  };
 
   return (
-    <div className="page-wrap">
-      <div className="pg-header">
-        <div className="pg-kicker">Admin</div>
-        <h1 className="pg-title">Students</h1>
-        <p className="pg-sub">All registered campus members — {users.length} total</p>
-      </div>
-
+    <div className="container page">
+      <PageHeader title="Students" subtitle={`${data.total} verified student${data.total === 1 ? '' : 's'}.`} />
       <AdminNav />
 
-      {/* Search */}
-      <div className="search-box" style={{ marginBottom: 20, maxWidth: 360 }}>
-        <span className="search-icon">🔍</span>
-        <input
-          className="inp"
-          placeholder="Search by name, email, ID…"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          style={{ paddingLeft: 36 }}
-        />
+      <div className="field" style={{ maxWidth: 420 }}>
+        <label className="label" htmlFor="adm-user-search">Search</label>
+        <div className="input-icon"><Search size={18} aria-hidden="true" /><input id="adm-user-search" className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Name, email or college ID" /></div>
       </div>
 
-      {users.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">👥</div>
-          <div className="empty-state-title">No students yet</div>
-          <p className="empty-state-sub">No students have registered yet.</p>
-        </div>
+      {loading ? <PageLoader text="Loading students…" /> : error ? <ErrorState message={error} onRetry={load} /> : data.users.length === 0 ? (
+        <EmptyState title="No students found">Try a different search.</EmptyState>
       ) : (
-        <div className="tbl-wrap anim-in">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Student</th>
-                <th>Email</th>
-                <th>College ID</th>
-                <th>Verified</th>
-                <th>Last Active</th>
-                <th>Joined</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-3)' }}>No results</td></tr>
-              ) : filtered.map((user, i) => {
-                const initials = user.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() || '?';
-                return (
-                  <tr key={user._id}>
-                    <td style={{ color: 'var(--text-3)', fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
-                      {String(i + 1).padStart(2, '0')}
-                    </td>
+        <>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Student</th><th>College ID</th><th>Status</th><th>Last active</th><th>Joined</th><th className="t-right">Actions</th></tr></thead>
+              <tbody>
+                {data.users.map((u) => (
+                  <tr key={u._id}>
                     <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg, var(--neon), var(--violet))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 800, color: 'var(--ink)', flexShrink: 0, fontFamily: 'var(--font-display)' }}>
-                          {initials}
-                        </div>
-                        <span style={{ fontWeight: 700, fontFamily: 'var(--font-display)', fontSize: '0.875rem', color: 'var(--text)' }}>
-                          {user.name}
-                        </span>
+                      <div className="row">
+                        <span className="avatar" aria-hidden="true">{initials(u.name)}</span>
+                        <div><div style={{ fontWeight: 600 }}>{u.name}</div><div className="cell-sub">{u.email}</div></div>
                       </div>
                     </td>
-                    <td style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>{user.email}</td>
-                    <td>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--neon)', background: 'var(--neon-dim)', border: '1px solid rgba(0,229,255,0.15)', padding: '2px 8px', borderRadius: 6 }}>
-                        {user.collegeId}
-                      </span>
-                    </td>
-                    <td>
-                      {user.isVerified
-                        ? <span className="badge-pill badge-verified">✓ Verified</span>
-                        : <span className="badge-pill badge-pending">Pending</span>}
-                    </td>
-                    <td style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>{timeAgo(user.lastActive)}</td>
-                    <td style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>
-                      {new Date(user.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                    <td>{u.collegeId}</td>
+                    <td>{u.isActive === false ? <Badge kind="suspended">Suspended</Badge> : <Badge kind="approved">Active</Badge>}</td>
+                    <td>{u.lastActive ? timeAgo(u.lastActive) : 'Never'}</td>
+                    <td>{formatDate(u.createdAt)}</td>
+                    <td className="t-right">
+                      <Button size="sm" variant={u.isActive === false ? 'success' : 'danger'} icon={u.isActive === false ? UserCheck : Ban} disabled={busyId === u._id} onClick={() => toggle(u)}>
+                        {u.isActive === false ? 'Reinstate' : 'Suspend'}
+                      </Button>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={data.page || page} pages={data.pages} onChange={setPage} />
+        </>
       )}
     </div>
   );

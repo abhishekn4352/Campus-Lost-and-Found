@@ -1,208 +1,171 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Camera, X } from 'lucide-react';
 import API from '../api/axios';
 import { useToast } from '../context/ToastContext';
 import { getErrorMessage } from '../utils/errorMessage';
+import { todayInputValue } from '../utils/format';
+import { CATEGORIES } from '../constants';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import Button from '../components/Button';
+import PageHeader from '../components/PageHeader';
+import { Alert } from '../components/States';
 
-const CATEGORIES = ['Electronics', 'Books', 'ID Card', 'Keys', 'Wallet', 'Clothing', 'Sports', 'Other'];
+const LIMITS = { title: 100, description: 1000, location: 120 };
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+function validate(form) {
+  const e = {};
+  if (form.title.trim().length < 3) e.title = 'Give it a short title (at least 3 characters).';
+  if (form.description.trim().length < 10) e.description = 'Add a few details — colour, brand, marks (at least 10 characters).';
+  if (!form.category) e.category = 'Choose a category.';
+  if (!form.lostFoundDate) e.lostFoundDate = 'Choose the date.';
+  else if (form.lostFoundDate > todayInputValue()) e.lostFoundDate = 'The date can’t be in the future.';
+  if (!form.location.trim()) e.location = 'Say where on campus.';
+  return e;
+}
+
+function FieldError({ id, message }) {
+  return message ? <span id={id} className="error-text">{message}</span> : null;
+}
 
 export default function PostItem() {
+  useDocumentTitle('Report an item');
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const [form, setForm] = useState({
-    type: 'lost', title: '', description: '',
-    category: '', location: '', lostFoundDate: ''
-  });
-  const [image, setImage]           = useState(null);
-  const [imagePreview, setPreview]  = useState(null);
-  const [error, setError]           = useState('');
-  const [loading, setLoading]       = useState(false);
+  const [form, setForm] = useState({ type: 'lost', title: '', description: '', category: '', location: '', lostFoundDate: todayInputValue() });
+  const [errors, setErrors] = useState({});
+  const [image, setImage] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [imageError, setImageError] = useState('');
+  const [submitError, setSubmitError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
-  const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
+  // Release the object URL when the preview changes / unmounts.
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
-  const handleImageChange = e => {
-    const file = e.target.files[0];
-    setImage(file);
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setPreview(reader.result);
-      reader.readAsDataURL(file);
-    } else {
-      setPreview(null);
-    }
+  const set = (name, value) => {
+    setForm((f) => ({ ...f, [name]: value }));
+    if (errors[name]) setErrors((e) => ({ ...e, [name]: undefined }));
   };
+  const onChange = (e) => set(e.target.name, e.target.value);
 
-  const handleSubmit = async e => {
+  const pickImage = (file) => {
+    setImageError('');
+    if (!file) return;
+    if (!IMAGE_TYPES.includes(file.type)) return setImageError('Use a JPG, PNG or WEBP image.');
+    if (file.size > MAX_IMAGE_BYTES) return setImageError('That image is over 5 MB. Choose a smaller one.');
+    setImage(file);
+    setPreview(URL.createObjectURL(file));
+  };
+  const removeImage = () => { setImage(null); setPreview(null); setImageError(''); };
+
+  const submit = async (e) => {
     e.preventDefault();
+    const found = validate(form);
+    setErrors(found);
+    if (Object.keys(found).length) {
+      document.getElementById(`post-${Object.keys(found)[0]}`)?.focus();
+      return;
+    }
     setLoading(true);
-    setError('');
+    setSubmitError('');
     const fd = new FormData();
-    Object.keys(form).forEach(k => fd.append(k, form[k]));
+    Object.entries(form).forEach(([k, v]) => fd.append(k, typeof v === 'string' ? v.trim() : v));
     if (image) fd.append('image', image);
     try {
-      await API.post('/items', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-      showToast(`Your ${form.type} item report was posted.`, 'success');
-      navigate('/my-posts');
+      const { data } = await API.post('/items', fd);
+      showToast(`Your ${form.type} item is on the board.`, 'success');
+      navigate(`/items/${data._id}`);
     } catch (err) {
-      setError(getErrorMessage(err, 'Failed to post item'));
-    } finally {
+      setSubmitError(getErrorMessage(err, 'We couldn’t post your item.'));
       setLoading(false);
     }
   };
 
+  const isLost = form.type === 'lost';
+
   return (
-    <div className="page-wrap">
-      <div className="row justify-content-center">
-        <div className="col-lg-7 col-xl-6">
-          <div className="pg-header" style={{ textAlign: 'center' }}>
-            <div className="pg-kicker">New Report</div>
-            <h1 className="pg-title">Post an Item</h1>
-            <p className="pg-sub">Help someone find their belongings, or report what you've lost</p>
-          </div>
+    <div className="container container-form page">
+      <PageHeader title="Report an item" subtitle="The more specific you are, the faster it gets matched." />
 
-          <div className="card-panel anim-up" style={{ padding: '32px 28px' }}>
-            {error && (
-              <div className="alert-box alert-err">⚠️ {error}</div>
-            )}
+      <form className="panel" onSubmit={submit} noValidate>
+        {submitError && <Alert type="error">{submitError}</Alert>}
 
-            <form onSubmit={handleSubmit}>
-              {/* Type Toggle */}
-              <div style={{ marginBottom: 20 }}>
-                <label className="field-label">I want to report…</label>
-                <div className="type-toggle">
-                  <button
-                    type="button"
-                    className={`type-btn ${form.type === 'lost' ? 'lost-active' : ''}`}
-                    onClick={() => setForm({ ...form, type: 'lost' })}
-                  >
-                    🔴 I Lost Something
-                  </button>
-                  <button
-                    type="button"
-                    className={`type-btn ${form.type === 'found' ? 'found-active' : ''}`}
-                    onClick={() => setForm({ ...form, type: 'found' })}
-                  >
-                    🟢 I Found Something
-                  </button>
-                </div>
-              </div>
-
-              <div className="field">
-                <label className="field-label" htmlFor="post-title">Item Title</label>
-                <input
-                  id="post-title"
-                  className="inp"
-                  name="title"
-                  value={form.title}
-                  onChange={handleChange}
-                  placeholder="e.g. Black Samsung Galaxy Buds"
-                  required
-                />
-              </div>
-
-              <div className="field">
-                <label className="field-label" htmlFor="post-description">Description</label>
-                <textarea
-                  id="post-description"
-                  className="inp"
-                  name="description"
-                  rows={3}
-                  value={form.description}
-                  onChange={handleChange}
-                  placeholder="Describe the item — color, brand, distinguishing features…"
-                  required
-                  style={{ resize: 'vertical' }}
-                />
-              </div>
-
-              <div className="row g-3">
-                <div className="col-md-6">
-                  <div className="field">
-                    <label className="field-label" htmlFor="post-category">Category</label>
-                    <select
-                      id="post-category"
-                      className="inp inp-select"
-                      name="category"
-                      value={form.category}
-                      onChange={handleChange}
-                      required
-                    >
-                      <option value="">Select category</option>
-                      {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="col-md-6">
-                  <div className="field">
-                    <label className="field-label" htmlFor="post-date">Date Lost / Found</label>
-                    <input
-                      id="post-date"
-                      type="date"
-                      className="inp"
-                      name="lostFoundDate"
-                      value={form.lostFoundDate}
-                      onChange={handleChange}
-                      required
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="field">
-                <label className="field-label" htmlFor="post-location">Location on Campus</label>
-                <input
-                  id="post-location"
-                  className="inp"
-                  name="location"
-                  placeholder="e.g. Library Block A, Cafeteria, Auditorium"
-                  value={form.location}
-                  onChange={handleChange}
-                  required
-                />
-              </div>
-
-              {/* Image Upload */}
-              <div className="field">
-                <label className="field-label" htmlFor="post-item-image">Photo <span style={{ color: 'var(--text-3)', fontWeight: 400 }}>(optional)</span></label>
-                <div className="upload-zone">
-                  <input id="post-item-image" type="file" accept="image/*" onChange={handleImageChange} />
-                  {!imagePreview && (
-                    <>
-                      <div style={{ fontSize: '1.8rem', marginBottom: 6, opacity: 0.4 }}>📷</div>
-                      <div style={{ fontSize: '0.82rem', color: 'var(--text-3)' }}>
-                        Click or drag image here
-                      </div>
-                    </>
-                  )}
-                </div>
-                {imagePreview && (
-                  <div className="img-preview-box">
-                    <img src={imagePreview} alt="Preview" />
-                    <button
-                      type="button"
-                      className="img-remove-btn"
-                      onClick={() => { setImage(null); setPreview(null); }}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                className={`btn btn-full btn-lg ${form.type === 'lost' ? 'btn-danger-soft' : 'btn-success-soft'}`}
-                disabled={loading}
-                style={{ marginTop: 8 }}
-              >
-                {loading
-                  ? <><span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Posting…</>
-                  : `🚀 Post ${form.type === 'lost' ? 'Lost' : 'Found'} Item`}
-              </button>
-            </form>
+        <div className="field">
+          <span className="label" id="type-label">What happened?</span>
+          <div className="seg" role="group" aria-labelledby="type-label">
+            <button type="button" className="is-lost" aria-pressed={isLost} onClick={() => set('type', 'lost')}>I lost something</button>
+            <button type="button" className="is-found" aria-pressed={!isLost} onClick={() => set('type', 'found')}>I found something</button>
           </div>
         </div>
-      </div>
+
+        <div className="field">
+          <label className="label" htmlFor="post-title">Title</label>
+          <input id="post-title" name="title" className="input" value={form.title} onChange={onChange} maxLength={LIMITS.title}
+            placeholder="e.g. Black wallet with a green sticker" aria-invalid={errors.title ? 'true' : undefined} aria-describedby="post-title-err" />
+          <FieldError id="post-title-err" message={errors.title} />
+        </div>
+
+        <div className="field">
+          <label className="label" htmlFor="post-description">Description</label>
+          <textarea id="post-description" name="description" className="textarea" rows={4} value={form.description} onChange={onChange} maxLength={LIMITS.description}
+            placeholder={isLost ? 'Brand, colour, what was inside, anything unusual about it.' : 'Describe it — but keep one detail back so the real owner can prove it’s theirs.'}
+            aria-invalid={errors.description ? 'true' : undefined} aria-describedby="post-description-err" />
+          <div className="field-meta">
+            <FieldError id="post-description-err" message={errors.description} />
+            <span className="hint" style={{ marginLeft: 'auto' }}>{form.description.length}/{LIMITS.description}</span>
+          </div>
+        </div>
+
+        <div className="field">
+          <label className="label" htmlFor="post-category">Category</label>
+          <select id="post-category" name="category" className="select" value={form.category} onChange={onChange}
+            aria-invalid={errors.category ? 'true' : undefined} aria-describedby="post-category-err">
+            <option value="">Choose a category</option>
+            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <FieldError id="post-category-err" message={errors.category} />
+        </div>
+
+        <div className="field">
+          <label className="label" htmlFor="post-lostFoundDate">{isLost ? 'Date you lost it' : 'Date you found it'}</label>
+          <input id="post-lostFoundDate" name="lostFoundDate" type="date" className="input" max={todayInputValue()} value={form.lostFoundDate} onChange={onChange}
+            aria-invalid={errors.lostFoundDate ? 'true' : undefined} aria-describedby="post-lostFoundDate-err" />
+          <FieldError id="post-lostFoundDate-err" message={errors.lostFoundDate} />
+        </div>
+
+        <div className="field">
+          <label className="label" htmlFor="post-location">{isLost ? 'Where did you lose it?' : 'Where did you find it?'}</label>
+          <input id="post-location" name="location" className="input" value={form.location} onChange={onChange} maxLength={LIMITS.location}
+            placeholder="e.g. Central library, 2nd floor" aria-invalid={errors.location ? 'true' : undefined} aria-describedby="post-location-err" />
+          <FieldError id="post-location-err" message={errors.location} />
+        </div>
+
+        <div className="field">
+          <span className="label">Photo <span className="optional">(optional)</span></span>
+          {preview ? (
+            <div className="preview">
+              <img src={preview} alt="Preview of the selected photo" />
+              <button type="button" className="icon-btn" onClick={removeImage} aria-label="Remove photo"><X size={18} aria-hidden="true" /></button>
+            </div>
+          ) : (
+            <div className={`dropzone ${dragOver ? 'is-over' : ''}`}
+              onDragOver={() => setDragOver(true)} onDragLeave={() => setDragOver(false)} onDrop={() => setDragOver(false)}>
+              <input id="post-image" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose a photo" onChange={(e) => pickImage(e.target.files[0])} />
+              <Camera size={28} aria-hidden="true" />
+              <strong>Add a photo</strong>
+              <span>Drag one here or tap to choose · JPG, PNG or WEBP · up to 5 MB</span>
+            </div>
+          )}
+          {imageError && <span className="error-text" role="alert">{imageError}</span>}
+          {!isLost && <span className="hint">Tip: avoid showing ID numbers or names clearly — keep something back to verify the owner.</span>}
+        </div>
+
+        <Button type="submit" variant="primary" size="lg" block loading={loading}>{isLost ? 'Post lost item' : 'Post found item'}</Button>
+      </form>
     </div>
   );
 }

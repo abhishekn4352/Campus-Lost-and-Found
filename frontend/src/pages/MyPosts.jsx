@@ -1,141 +1,148 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Plus, Trash2, Handshake, PackageCheck, Undo2, Inbox, ClipboardList } from 'lucide-react';
 import API from '../api/axios';
-import Spinner from '../components/Spinner';
 import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
 import { getErrorMessage } from '../utils/errorMessage';
+import { CATEGORY_ICONS } from '../constants';
+import { assetUrl } from '../utils/assets';
+import { formatDate, plural } from '../utils/format';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import Button from '../components/Button';
+import PageHeader from '../components/PageHeader';
+import { TypeBadge, StatusBadge, Badge } from '../components/Badge';
+import { EmptyState, ErrorState, ListSkeleton } from '../components/States';
+
+const FILTERS = ['All', 'Open', 'Claimed', 'Closed'];
 
 export default function MyPosts() {
-  const [items, setItems]   = useState([]);
+  useDocumentTitle('My posts');
+  const { showToast } = useToast();
+  const confirm = useConfirm();
+  const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [deleting, setDeleting] = useState(null);
-  const { showToast } = useToast();
+  const [filter, setFilter] = useState('All');
+  const [busyId, setBusyId] = useState(null);
 
-  useEffect(() => {
-    API.get('/items/my-posts')
-      .then(({ data }) => { setItems(data); setLoading(false); })
-      .catch((err) => { setError(getErrorMessage(err, 'Could not load your posts.')); setLoading(false); });
-  }, []);
-
-  const handleDelete = async id => {
-    if (!window.confirm('Delete this post permanently?')) return;
-    setDeleting(id);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      await API.delete(`/items/${id}`);
-      setItems(items.filter(i => i._id !== id));
-      showToast('Item deleted.', 'success');
+      const { data } = await API.get('/items/my-posts');
+      setItems(data);
     } catch (err) {
-      showToast(getErrorMessage(err, 'Delete failed.'), 'error');
+      setError(getErrorMessage(err, 'We couldn’t load your posts.'));
     } finally {
-      setDeleting(null);
+      setLoading(false);
     }
-  };
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const handleStatusUpdate = async (id, newStatus) => {
-    if (!window.confirm(`Mark this item as ${newStatus}?`)) return;
+  const remove = async (item) => {
+    const ok = await confirm({ title: 'Delete this post?', message: `“${item.title}” and any claims or chats about it will be permanently removed.`, confirmLabel: 'Delete post', danger: true });
+    if (!ok) return;
+    setBusyId(item._id);
     try {
-      await API.put(`/items/${id}`, { status: newStatus });
-      setItems(items.map(i => i._id === id ? { ...i, status: newStatus } : i));
-      showToast(`Item marked as ${newStatus}.`, 'success');
+      await API.delete(`/items/${item._id}`);
+      setItems((prev) => prev.filter((i) => i._id !== item._id));
+      showToast('Post deleted.', 'success');
     } catch (err) {
-      showToast(getErrorMessage(err, 'Update failed.'), 'error');
+      showToast(getErrorMessage(err, 'We couldn’t delete the post.'), 'error');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  if (loading) return <Spinner text="Loading your posts…" />;
+  const changeStatus = async (item, status, { title, message, confirmLabel }) => {
+    const ok = await confirm({ title, message, confirmLabel });
+    if (!ok) return;
+    setBusyId(item._id);
+    try {
+      await API.put(`/items/${item._id}`, { status });
+      showToast('Post updated.', 'success');
+      await load();
+    } catch (err) {
+      showToast(getErrorMessage(err, 'We couldn’t update the post.'), 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const shown = items.filter((i) => filter === 'All' || i.status === filter);
 
   return (
-    <div className="page-wrap">
-      <div className="pg-header" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <div className="pg-kicker">My Activity</div>
-          <h1 className="pg-title">My Posts</h1>
-          <p className="pg-sub">Items you've reported — {items.length} total</p>
-        </div>
-        <Link to="/post-item" className="btn btn-neon">+ New Report</Link>
-      </div>
+    <div className="container page">
+      <PageHeader title="My posts" subtitle="Items you’ve reported. Update them as things move along.">
+        <Button to="/post-item" variant="primary" icon={Plus}>New report</Button>
+      </PageHeader>
 
-      {error && <div className="alert-box alert-err" role="alert" style={{ marginBottom: 20 }}>⚠️ {error}</div>}
-
-      {items.length > 0 && (
-        <div className="anim-in" style={{ marginBottom: '24px', padding: '16px', background: 'var(--ink-2)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', display: 'flex', gap: '16px', alignItems: 'center' }}>
-          <div style={{ fontSize: '1.5rem' }}>💡</div>
-          <div style={{ fontSize: '0.86rem', color: 'var(--text-3)', lineHeight: 1.5 }}>
-            <strong>How to manage your posts:</strong><br />
-            1. Use <strong>Mark as Matched</strong> when you find the owner/item (moves to <span style={{ color: 'var(--violet)', fontWeight: 700 }}>Claimed</span>).<br />
-            2. Use <strong>Mark as Returned</strong> once the physical handover is complete (moves to <span style={{ color: 'var(--success)', fontWeight: 700 }}>Closed</span>).
-          </div>
-        </div>
-      )}
-
-      {items.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">📋</div>
-          <div className="empty-state-title">No posts yet</div>
-          <p className="empty-state-sub">You haven't posted any items yet. Get started below.</p>
-          <Link to="/post-item" className="btn btn-neon">Post Your First Item</Link>
-        </div>
+      {loading ? <ListSkeleton /> : error ? <ErrorState message={error} onRetry={load} /> : items.length === 0 ? (
+        <EmptyState icon={ClipboardList} title="You haven’t posted anything yet" action={<Button to="/post-item" variant="primary">Report an item</Button>}>
+          Lost or found something on campus? Put it on the board.
+        </EmptyState>
       ) : (
-        <div className="tbl-wrap anim-in">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map(item => (
-                <tr key={item._id}>
-                  <td>
-                    <Link to={`/items/${item._id}`} style={{ color: 'var(--neon)', fontWeight: 700, textDecoration: 'none', fontFamily: 'var(--font-display)', fontSize: '0.875rem' }}>
-                      {item.title}
-                    </Link>
-                    <div style={{ fontSize: '0.74rem', color: 'var(--text-3)', marginTop: 2 }}>{item.location}</div>
-                  </td>
-                  <td>
-                    <span className={`badge-pill ${item.type === 'lost' ? 'badge-lost' : 'badge-found'}`}>
-                      {item.type}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`badge-pill badge-${item.status.toLowerCase()}`}>{item.status}</span>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <>
+          <div className="seg" role="group" aria-label="Filter by status" style={{ marginBottom: 20, maxWidth: 440 }}>
+            {FILTERS.map((f) => (
+              <button key={f} type="button" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                {f === 'Claimed' ? 'Matched' : f}
+              </button>
+            ))}
+          </div>
+
+          {shown.length === 0 ? <p className="muted">No posts with this status.</p> : (
+            <ul className="list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {shown.map((item) => {
+                const Icon = CATEGORY_ICONS[item.category] || CATEGORY_ICONS.Other;
+                const src = assetUrl(item.imageUrl);
+                const busy = busyId === item._id;
+                return (
+                  <li key={item._id} className={`list-row ${item.pendingClaims ? 'is-pending' : ''}`}>
+                    <div className="thumb">{src ? <img src={src} alt="" loading="lazy" /> : <Icon size={26} aria-hidden="true" />}</div>
+                    <div className="list-main">
+                      <Link to={`/items/${item._id}`} className="list-title truncate">{item.title}</Link>
+                      <div className="list-meta">
+                        <TypeBadge type={item.type} />
+                        <StatusBadge status={item.status} />
+                        {item.autoClosed && <Badge kind="cancelled">Expired</Badge>}
+                        <span>{item.location}</span>
+                        <span>{formatDate(item.createdAt)}</span>
+                      </div>
+                      {item.pendingClaims > 0 && (
+                        <Link to="/claims?tab=received" className="note" style={{ color: 'var(--warn)', fontWeight: 600 }}>
+                          <Inbox size={16} aria-hidden="true" />{plural(item.pendingClaims, 'claim')} waiting for your decision
+                        </Link>
+                      )}
+                    </div>
+                    <div className="list-actions">
                       {item.status === 'Open' && (
-                        <button
-                          className="btn btn-success-soft btn-sm"
-                          onClick={() => handleStatusUpdate(item._id, 'Claimed')}
-                        >
-                          🤝 Mark as Matched
-                        </button>
+                        <Button size="sm" variant="success" icon={Handshake} disabled={busy}
+                          onClick={() => changeStatus(item, 'Claimed', { title: 'Mark as matched?', message: 'Use this when you’ve found who the item belongs to. Any pending claims will be closed.', confirmLabel: 'Mark as matched' })}>
+                          Mark matched
+                        </Button>
                       )}
                       {item.status === 'Claimed' && (
-                        <button
-                          className="btn btn-violet-soft btn-sm"
-                          onClick={() => handleStatusUpdate(item._id, 'Closed')}
-                        >
-                          ✅ Mark as Returned
-                        </button>
+                        <>
+                          <Button size="sm" variant="success" icon={PackageCheck} disabled={busy}
+                            onClick={() => changeStatus(item, 'Closed', { title: 'Mark as returned?', message: 'This closes the post. Only do this once the item has actually been handed over.', confirmLabel: 'Mark returned' })}>
+                            Mark returned
+                          </Button>
+                          <Button size="sm" icon={Undo2} disabled={busy}
+                            onClick={() => changeStatus(item, 'Open', { title: 'Reopen this post?', message: 'The handover fell through? It goes back on the board for others to find.', confirmLabel: 'Reopen' })}>
+                            Reopen
+                          </Button>
+                        </>
                       )}
-                      <button
-                        className="btn btn-danger-soft btn-sm"
-                        onClick={() => handleDelete(item._id)}
-                        disabled={deleting === item._id}
-                      >
-                        {deleting === item._id ? '…' : '🗑️'}
-                      </button>
+                      <Button size="sm" variant="danger" icon={Trash2} disabled={busy} onClick={() => remove(item)} aria-label={`Delete ${item.title}`}>Delete</Button>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );

@@ -1,210 +1,233 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
+import { MapPin, Calendar, User, Hourglass, MessageCircle, HandHelping, ArrowLeft, Lock, PackageSearch, Undo2 } from 'lucide-react';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import { useConfirm } from '../context/ConfirmContext';
+import { useNotifications } from '../context/NotificationsContext';
 import { getErrorMessage } from '../utils/errorMessage';
-import Spinner from '../components/Spinner';
+import { formatDate } from '../utils/format';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import { ItemMedia } from '../components/ItemCard';
+import { TypeBadge, StatusBadge } from '../components/Badge';
+import Button from '../components/Button';
+import Modal from '../components/Modal';
+import { Alert, EmptyState, ErrorState, PageLoader } from '../components/States';
+
+const MAX_CLAIM = 500;
+
+function ClaimDialog({ item, onClose, onSubmitted }) {
+  const { showToast } = useToast();
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const trimmed = message.trim();
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (trimmed.length < 10) return setError('Add a few more details so the finder can check (at least 10 characters).');
+    setBusy(true);
+    setError('');
+    try {
+      const { data } = await API.post(`/claims/request/${item._id}`, { message: trimmed });
+      showToast('Claim sent. You’ll be notified when the finder replies.', 'success');
+      onSubmitted(data.claim);
+    } catch (err) {
+      setError(getErrorMessage(err, 'We couldn’t send your claim.'));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Claim this item" onClose={onClose}>
+      <p className="muted">Describe something only the owner would know — marks, contents, when and where you lost it. The finder will review this before anything is handed over.</p>
+      <form onSubmit={submit} noValidate className="mt-4">
+        {error && <Alert type="error">{error}</Alert>}
+        <div className="field">
+          <label className="label" htmlFor="claim-message">How can you prove it’s yours?</label>
+          <textarea
+            id="claim-message" className="textarea" rows={5} maxLength={MAX_CLAIM} data-autofocus
+            value={message} onChange={(e) => setMessage(e.target.value)}
+            placeholder="e.g. Blue case with a cracked corner, my library card is inside, lost near Block B on Monday."
+          />
+          <div className="field-meta"><span className="hint">Don’t include your phone number — you can share it later in chat.</span><span className="hint">{message.length}/{MAX_CLAIM}</span></div>
+        </div>
+        <div className="modal-actions">
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={busy}>Send claim</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 export default function ItemDetail() {
   const { id } = useParams();
   const { user, isLoggedIn } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
-  const [item, setItem]         = useState(null);
-  const [loading, setLoading]   = useState(true);
-  const [msg, setMsg]           = useState('');
-  const [msgType, setMsgType]   = useState('warn');
-  const [claiming, setClaiming] = useState(false);
-  const [requestingClaim, setRequestingClaim] = useState(false);
+  const confirm = useConfirm();
+  const { refresh: refreshNotifications } = useNotifications();
 
-  useEffect(() => {
-    API.get(`/items/${id}`)
-      .then(({ data }) => { setItem(data); setLoading(false); })
-      .catch(() => setLoading(false));
+  const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notFound, setNotFound] = useState(false);
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+
+  useDocumentTitle(item?.title);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    setNotFound(false);
+    try {
+      const { data } = await API.get(`/items/${id}`);
+      setItem(data);
+    } catch (err) {
+      if (err.response?.status === 404) setNotFound(true);
+      else setError(getErrorMessage(err, 'We couldn’t load this item.'));
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  const handleContact = async () => {
-    if (!isLoggedIn()) return navigate('/login');
-    setClaiming(true);
+  useEffect(() => { load(); }, [load]);
+
+  const requireLogin = () => navigate('/login', { state: { from: location.pathname } });
+
+  const startChat = async () => {
+    if (!isLoggedIn()) return requireLogin();
+    setStarting(true);
     try {
-      // Start or get conversation
-      await API.post('/messages/send', {
-        itemId: id,
-        receiverId: item.postedBy._id,
-        content: `Hi, I'm interested in the item: ${item.title}`
-      });
-      
-      // Get the conversation to find its ID (or simplify the backend to return it)
-      const { data: convs } = await API.get('/messages/conversations');
-      const conv = convs.find(c => c.itemId._id === id && c.participants.some(p => p._id === item.postedBy._id));
-      
-      if (conv) {
-        navigate(`/messages/${conv._id}`);
-      } else {
-        setMsgType('info');
-        setMsg('Conversation started. Check your messages.');
-      }
+      const { data } = await API.post('/messages/start', { itemId: id });
+      navigate(`/messages/${data.conversationId}`);
     } catch (err) {
-      setMsgType('err');
-      setMsg(getErrorMessage(err, 'Error initializing contact'));
-    } finally {
-      setClaiming(false);
+      showToast(getErrorMessage(err, 'We couldn’t open the chat.'), 'error');
+      setStarting(false);
     }
   };
 
-  // This is the entry point for the OTP-verified claim workflow
-  // (backend: claimController.requestClaim -> /verify-otp/:claimId page).
-  // On success, jump straight to the OTP-entry page using the claimId
-  // the backend returns. If the person already has a pending claim on
-  // this item, the backend tells us its claimId too — reuse that instead
-  // of showing a dead-end error.
-  const handleRequestClaim = async () => {
-    if (!isLoggedIn()) return navigate('/login');
-    setRequestingClaim(true);
-    setMsg('');
+  const withdraw = async () => {
+    const ok = await confirm({ title: 'Withdraw your claim?', message: 'The finder will no longer see it. You can claim again later.', confirmLabel: 'Withdraw claim', danger: true });
+    if (!ok) return;
+    setWithdrawing(true);
     try {
-      const { data } = await API.post(`/claims/request/${id}`);
-      showToast('OTP sent to your email — enter it to confirm your claim.', 'success');
-      navigate(`/verify-otp/${data.claimId}`);
+      await API.delete(`/claims/${item.myClaim._id}`);
+      showToast('Claim withdrawn.', 'success');
+      refreshNotifications();
+      await load();
     } catch (err) {
-      const existingClaimId = err.response?.data?.claimId;
-      if (existingClaimId) {
-        showToast('You already have a pending claim on this item.', 'info');
-        navigate(`/verify-otp/${existingClaimId}`);
-        return;
-      }
-      setMsgType('err');
-      setMsg(getErrorMessage(err, 'Unable to request a claim right now.'));
+      showToast(getErrorMessage(err, 'We couldn’t withdraw the claim.'), 'error');
     } finally {
-      setRequestingClaim(false);
+      setWithdrawing(false);
     }
   };
 
-  if (loading) return <Spinner text="Loading item details…" />;
-
-  if (!item) return (
-    <div className="page-wrap">
-      <div className="empty-state">
-        <div className="empty-state-icon">😕</div>
-        <div className="empty-state-title">Item Not Found</div>
-        <p className="empty-state-sub">This item may have been removed or the link is incorrect.</p>
-        <Link to="/items" className="btn btn-neon">Browse All Items</Link>
+  if (loading) return <div className="container page"><PageLoader text="Loading item…" /></div>;
+  if (notFound) {
+    return (
+      <div className="container container-narrow page">
+        <EmptyState icon={PackageSearch} title="This item isn’t here any more" action={<Button to="/items" variant="primary">Browse items</Button>}>
+          It may have been returned, expired, or removed by the person who posted it.
+        </EmptyState>
       </div>
-    </div>
-  );
+    );
+  }
+  if (error) return <div className="container container-narrow page"><ErrorState message={error} onRetry={load} /></div>;
 
-  const isOwner = user?._id?.toString() === item.postedBy._id?.toString();
-  const imgSrc  = item.imageUrl
-    ? `${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`
-    : null;
-
-  const fmtDate = d => new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const isOwner = !!user && String(user._id) === String(item.postedBy?._id);
+  const open = item.status === 'Open';
+  const myClaim = item.myClaim;
 
   return (
-    <div className="page-wrap">
-      {/* Back */}
-      <Link to="/items" className="btn btn-ghost btn-sm" style={{ marginBottom: 20, display: 'inline-flex' }}>
-        ← Back to items
-      </Link>
+    <div className="container page">
+      <Button to="/items" variant="ghost" size="sm" icon={ArrowLeft} className="mt-2">All items</Button>
 
-      <div className="row g-4 justify-content-center">
-        <div className="col-lg-8">
-          {/* Image */}
-          {imgSrc ? (
-            <img src={imgSrc} alt={item.title} className="detail-img" />
-          ) : (
-            <div style={{ height: 220, background: 'var(--ink-3)', borderRadius: 'var(--radius)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '5rem', marginBottom: 20 }}>
-              📦
+      <div className="detail mt-4">
+        <ItemMedia item={item} className="detail-media d-media" size={72} />
+
+        <aside className="d-aside">
+          <div className="panel">
+            <div className="row row-wrap" style={{ gap: 8 }}>
+              <TypeBadge type={item.type} />
+              <StatusBadge status={item.status} />
+              <span className="muted" style={{ fontSize: '0.875rem' }}>{item.category}</span>
             </div>
-          )}
+            <h1 style={{ fontSize: 'clamp(1.6rem, 3.4vw, 2.2rem)', marginTop: 12 }}>{item.title}</h1>
 
-          {/* Badges */}
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-            <span className={`badge-pill ${item.type === 'lost' ? 'badge-lost' : 'badge-found'}`}>
-              {item.type === 'lost' ? '● Lost' : '● Found'}
-            </span>
-            <span className={`badge-pill badge-${item.status?.toLowerCase()}`}>{item.status}</span>
-            <span className="badge-pill" style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-2)', border: '1px solid var(--border)' }}>
-              {item.category}
-            </span>
+            <dl className="facts">
+              <div><MapPin size={18} aria-hidden="true" /><span><dt>{item.type === 'lost' ? 'Lost near' : 'Found at'}</dt><dd>{item.location}</dd></span></div>
+              <div><Calendar size={18} aria-hidden="true" /><span><dt>Date</dt><dd>{formatDate(item.lostFoundDate, { year: 'numeric', month: 'long', day: 'numeric' })}</dd></span></div>
+              <div><User size={18} aria-hidden="true" /><span><dt>Posted by</dt><dd>{item.postedBy?.name || 'A student'}</dd></span></div>
+              {open && <div><Hourglass size={18} aria-hidden="true" /><span><dt>Stays on the board until</dt><dd>{formatDate(item.expiresAt)}</dd></span></div>}
+            </dl>
           </div>
 
-          {/* Title & Description */}
-          <h1 className="detail-title">{item.title}</h1>
-          <p style={{ color: 'var(--text-3)', lineHeight: 1.7, marginBottom: 24, fontWeight: 300 }}>
-            {item.description}
-          </p>
-
-          {/* Meta Grid */}
-          <div className="meta-grid">
-            {[
-              { lbl: 'Location',    val: item.location },
-              { lbl: 'Date',        val: fmtDate(item.lostFoundDate) },
-              { lbl: 'Posted By',   val: item.postedBy.name },
-              { lbl: 'Expires',     val: fmtDate(item.expiresAt) },
-            ].map(m => (
-              <div key={m.lbl} className="meta-block">
-                <div className="meta-block-lbl">{m.lbl}</div>
-                <div className="meta-block-val">{m.val}</div>
+          <div className="panel">
+            {isOwner ? (
+              <>
+                <Alert type="info">This is your post. Manage its status and review claims from your posts.</Alert>
+                <div className="row row-wrap">
+                  <Button to="/my-posts" variant="primary">Manage my posts</Button>
+                  {item.type === 'found' && <Button to="/claims?tab=received">Review claims</Button>}
+                </div>
+              </>
+            ) : !open ? (
+              <Alert type={item.status === 'Closed' ? 'success' : 'warning'}>
+                {item.status === 'Closed' ? 'This item has been returned or closed.' : 'This item has been matched and is waiting for handover.'}
+              </Alert>
+            ) : !isLoggedIn() ? (
+              <>
+                <p className="muted" style={{ marginBottom: 16 }}>Log in to {item.type === 'found' ? 'claim this item or message the finder' : 'tell the owner you found it'}.</p>
+                <Button variant="primary" block size="lg" onClick={requireLogin}>Log in to continue</Button>
+              </>
+            ) : item.type === 'found' ? (
+              <div className="stack" style={{ gap: 12 }}>
+                {myClaim?.status === 'pending' ? (
+                  <>
+                    <Alert type="info">Your claim is waiting for the finder’s review.</Alert>
+                    <Button icon={Undo2} onClick={withdraw} loading={withdrawing}>Withdraw claim</Button>
+                  </>
+                ) : (
+                  <>
+                    {myClaim?.status === 'rejected' && (
+                      <Alert type="warning">Your earlier claim wasn’t approved{myClaim.responseNote ? `: “${myClaim.responseNote}”` : '.'} You can send a new one with more detail.</Alert>
+                    )}
+                    <Button variant="primary" size="lg" block icon={HandHelping} onClick={() => setClaimOpen(true)}>This is mine — claim it</Button>
+                  </>
+                )}
+                <Button block icon={MessageCircle} onClick={startChat} loading={starting}>Message the finder</Button>
               </div>
-            ))}
+            ) : (
+              <div className="stack" style={{ gap: 12 }}>
+                <Button variant="primary" size="lg" block icon={MessageCircle} onClick={startChat} loading={starting}>I found this</Button>
+                <p className="muted" style={{ fontSize: '0.875rem' }}>This opens a private chat with the owner so you can describe where it is.</p>
+              </div>
+            )}
+            {isLoggedIn() && !isOwner && open && (
+              <p className="note"><Lock size={16} aria-hidden="true" />Your phone and email stay hidden unless you both choose to share them in chat.</p>
+            )}
           </div>
+        </aside>
 
-          {/* Actions */}
-          {msg && (
-            <div className={`alert-box alert-${msgType}`} style={{ marginTop: 16 }}>
-              {msgType === 'err' ? '⚠️' : msgType === 'info' ? 'ℹ️' : '⚠️'} {msg}
-            </div>
-          )}
-
-          {!isOwner && item.status === 'Open' && (
-            <div style={{ marginTop: 24 }}>
-              <button
-                className="btn btn-neon btn-full btn-lg"
-                onClick={handleContact}
-                disabled={claiming}
-              >
-                {claiming
-                  ? <><span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Processing…</>
-                  : '✉️ Send Secure Message to Owner'}
-              </button>
-              <button
-                className="btn btn-ghost btn-full btn-lg"
-                style={{ marginTop: 10 }}
-                onClick={handleRequestClaim}
-                disabled={requestingClaim}
-              >
-                {requestingClaim
-                  ? <><span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> Requesting…</>
-                  : `🔓 This is ${item.type === 'lost' ? 'mine — Request Claim' : 'my item — Claim it'}`}
-              </button>
-              <p style={{ marginTop: 12, fontSize: '0.8rem', color: 'var(--text-3)', textAlign: 'center' }}>
-                🔒 Your contact info is safe. You can choose to share it within the chat once you've connected.
-                Requesting a claim sends a one-time code to your email to confirm it's really you.
-              </p>
-            </div>
-          )}
-
-          {isOwner && (
-            <div className="alert-box alert-info" style={{ marginTop: 16 }}>
-              ℹ️ This is your post. Go to <Link to="/my-posts" className="auth-link">My Posts</Link> to manage its status.
-            </div>
-          )}
-
-          {item.status === 'Claimed' && (
-            <div className="alert-box alert-warn" style={{ marginTop: 16 }}>
-              🤝 This item has been matched and is currently being claimed.
-            </div>
-          )}
-
-          {item.status === 'Closed' && (
-            <div className="alert-box alert-ok" style={{ marginTop: 16 }}>
-              ✅ This item has been successfully returned and closed.
-            </div>
-          )}
-        </div>
+        <section className="panel d-desc" aria-labelledby="desc-h">
+          <h2 id="desc-h" style={{ fontSize: '1.15rem' }}>Description</h2>
+          <p className="prose">{item.description}</p>
+        </section>
       </div>
+
+      {claimOpen && (
+        <ClaimDialog
+          item={item}
+          onClose={() => setClaimOpen(false)}
+          onSubmitted={(claim) => { setClaimOpen(false); setItem((prev) => ({ ...prev, myClaim: claim })); refreshNotifications(); }}
+        />
+      )}
     </div>
   );
 }

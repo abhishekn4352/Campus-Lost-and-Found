@@ -1,202 +1,193 @@
-import { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Mail } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { getErrorMessage } from '../utils/errorMessage';
+import useCooldown from '../hooks/useCooldown';
+import useDocumentTitle from '../hooks/useDocumentTitle';
 import PasswordInput from '../components/PasswordInput';
+import OtpInput from '../components/OtpInput';
+import Button from '../components/Button';
+import { Alert } from '../components/States';
 import API from '../api/axios';
 
-const RESEND_COOLDOWN_SECONDS = 30;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MIN_PASSWORD = 8;
 
 export default function Login() {
-  const [loginMode, setLoginMode] = useState('password'); // 'password' or 'otp'
-  const [otpSent, setOtpSent] = useState(false);
-  const [form, setForm] = useState({ email: '', password: '', otp: '' });
+  useDocumentTitle('Log in');
+  const [mode, setMode] = useState('password'); // 'password' | 'otp' | 'reset'
+  const [codeSent, setCodeSent] = useState(false);
+  const [form, setForm] = useState({ email: '', password: '', otp: '', newPassword: '' });
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  const [cooldown, startCooldown] = useCooldown(30);
   const { login } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
-  const cooldownRef = useRef(null);
+  const location = useLocation();
 
-  useEffect(() => () => clearInterval(cooldownRef.current), []);
+  const field = (name) => (e) => setForm((f) => ({ ...f, [name]: e.target.value }));
+  const switchMode = (next) => { setMode(next); setCodeSent(false); setError(''); setInfo(''); setForm((f) => ({ ...f, otp: '', newPassword: '' })); };
 
-  const startCooldown = () => {
-    setCooldown(RESEND_COOLDOWN_SECONDS);
-    clearInterval(cooldownRef.current);
-    cooldownRef.current = setInterval(() => {
-      setCooldown((c) => {
-        if (c <= 1) { clearInterval(cooldownRef.current); return 0; }
-        return c - 1;
-      });
-    }, 1000);
+  const finishLogin = (user) => {
+    login(user);
+    showToast(`Welcome back, ${user.name.split(' ')[0]}!`, 'success');
+    const from = location.state?.from;
+    navigate(from || (user.role === 'admin' ? '/admin' : '/dashboard'), { replace: true });
   };
 
-  const handleChange = e => setForm({ ...form, [e.target.name]: e.target.value });
-
-  const requestOtp = async () => {
+  const sendCode = async () => {
     const email = form.email.trim();
-    if (!email) return setError('Email is required');
-    if (!EMAIL_RE.test(email)) return setError('Please enter a valid email address.');
-    setLoading(true);
-    setError('');
+    if (!EMAIL_RE.test(email)) return setError('Enter a valid email address.');
+    setLoading(true); setError(''); setInfo('');
     try {
-      await API.post('/auth/request-otp', { email });
-      setOtpSent(true);
-      setForm(f => ({ ...f, email, otp: '' })); // clear any stale OTP from a previous send
-      setSuccess('OTP sent to your email.');
+      await API.post('/auth/request-otp', { email, purpose: mode === 'reset' ? 'reset' : 'login' });
+      setCodeSent(true);
+      setForm((f) => ({ ...f, email, otp: '' }));
+      setInfo('If an account exists for that email, we’ve sent a 6-digit code. It expires in 10 minutes.');
       startCooldown();
     } catch (err) {
-      setError(getErrorMessage(err, 'Failed to send OTP.'));
+      setError(getErrorMessage(err, 'We couldn’t send a code right now.'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRequestOTP = async () => { await requestOtp(); };
-  const handleResendOTP = async () => {
-    if (cooldown > 0) return;
-    setSuccess('');
-    await requestOtp();
-  };
-
-  const handlePasswordLogin = async (e) => {
+  const submitPassword = async (e) => {
     e.preventDefault();
-    const email = form.email.trim();
-    if (!email) return setError('Email is required');
-    if (!form.password) return setError('Password is required');
-    setLoading(true);
-    setError('');
+    if (!form.email.trim()) return setError('Enter your email address.');
+    if (!form.password) return setError('Enter your password.');
+    setLoading(true); setError('');
     try {
-      const { data } = await API.post('/auth/login', { email, password: form.password });
-      login(data.user);
-      showToast(`Welcome back, ${data.user.name.split(' ')[0]}!`, 'success');
-      navigate(data.user.role === 'admin' ? '/admin' : '/items');
+      const { data } = await API.post('/auth/login', { email: form.email.trim(), password: form.password });
+      finishLogin(data.user);
     } catch (err) {
-      setError(getErrorMessage(err, 'Login failed. Please check your credentials.'));
-    } finally {
+      setError(getErrorMessage(err, 'Login failed. Check your email and password.'));
       setLoading(false);
     }
   };
 
-  const handleOTPLogin = async (e) => {
+  const submitOtp = async (e) => {
     e.preventDefault();
-    if (form.otp.length !== 6) return setError('Please enter the full 6-digit code.');
-    setLoading(true);
-    setError('');
+    if (form.otp.length !== 6) return setError('Enter the full 6-digit code.');
+    setLoading(true); setError('');
     try {
       const { data } = await API.post('/auth/login-otp', { email: form.email.trim(), otp: form.otp });
-      login(data.user);
-      showToast(`Welcome back, ${data.user.name.split(' ')[0]}!`, 'success');
-      navigate(data.user.role === 'admin' ? '/admin' : '/items');
+      finishLogin(data.user);
     } catch (err) {
-      setError(getErrorMessage(err, 'OTP verification failed.'));
-    } finally {
+      setError(getErrorMessage(err, 'That code didn’t work.'));
       setLoading(false);
     }
   };
 
+  const submitReset = async (e) => {
+    e.preventDefault();
+    if (form.otp.length !== 6) return setError('Enter the full 6-digit code.');
+    if (form.newPassword.length < MIN_PASSWORD) return setError(`Choose a password of at least ${MIN_PASSWORD} characters.`);
+    setLoading(true); setError('');
+    try {
+      await API.post('/auth/reset-password', { email: form.email.trim(), otp: form.otp, newPassword: form.newPassword });
+      showToast('Password updated. Log in with your new password.', 'success');
+      setForm((f) => ({ ...f, password: '', otp: '', newPassword: '' }));
+      setMode('password'); setCodeSent(false); setInfo(''); setLoading(false);
+    } catch (err) {
+      setError(getErrorMessage(err, 'We couldn’t reset your password.'));
+      setLoading(false);
+    }
+  };
+
+  const resend = (
+    <p className="hint" style={{ textAlign: 'center', marginTop: 12 }}>
+      {cooldown > 0 ? `You can request another code in ${cooldown}s.` : (
+        <>Didn’t get it? <button type="button" className="link-btn" onClick={sendCode} disabled={loading}>Send a new code</button></>
+      )}
+    </p>
+  );
+
+  const emailField = (disabled) => (
+    <div className="field">
+      <label className="label" htmlFor="login-email">Email address</label>
+      <div className="input-icon">
+        <Mail size={18} aria-hidden="true" />
+        <input id="login-email" type="email" className="input" value={form.email} onChange={field('email')} placeholder="you@college.edu" autoComplete="email" required disabled={disabled} />
+      </div>
+    </div>
+  );
+
   return (
-    <div className="auth-page">
-      <div className="auth-card anim-up">
-        <div className="auth-icon-wrap">🔐</div>
-        <h2 className="auth-h">Welcome back</h2>
-        <p className="auth-sub">Sign in to your campus account</p>
+    <div className="auth">
+      <div className="auth-card">
+        <h1>{mode === 'reset' ? 'Reset your password' : 'Welcome back'}</h1>
+        <p className="page-sub">{mode === 'reset' ? 'We’ll email you a code, then you can choose a new password.' : 'Log in to post items, claim yours and chat with finders.'}</p>
 
-        <div className="type-toggle" style={{ marginBottom: '24px' }}>
-          <button 
-            type="button" 
-            className={`btn btn-sm ${loginMode === 'password' ? 'btn-neon' : 'btn-ghost'}`}
-            onClick={() => { setLoginMode('password'); setOtpSent(false); setSuccess(''); setError(''); }}
-          >
-            Password
-          </button>
-          <button 
-            type="button" 
-            className={`btn btn-sm ${loginMode === 'otp' ? 'btn-neon' : 'btn-ghost'}`}
-            onClick={() => { setLoginMode('otp'); setSuccess(''); setError(''); }}
-          >
-            OTP Login
-          </button>
-        </div>
+        {mode !== 'reset' && (
+          <div className="seg" role="group" aria-label="Login method" style={{ marginBottom: 20 }}>
+            <button type="button" aria-pressed={mode === 'password'} onClick={() => switchMode('password')}>Password</button>
+            <button type="button" aria-pressed={mode === 'otp'} onClick={() => switchMode('otp')}>Email code</button>
+          </div>
+        )}
 
-        {error && <div className="alert-box alert-err" role="alert"><span>⚠️</span> {error}</div>}
-        {success && <div className="alert-box alert-ok" role="status"><span>✅</span> {success}</div>}
+        {error && <Alert type="error">{error}</Alert>}
+        {info && <Alert type="success">{info}</Alert>}
 
-        {loginMode === 'password' ? (
-          <form onSubmit={handlePasswordLogin} noValidate>
-            <div className="field">
-              <label className="field-label" htmlFor="login-email">Email Address</label>
-              <input id="login-email" type="email" className="inp" name="email" value={form.email} onChange={handleChange} placeholder="you@college.edu" autoComplete="email" required />
+        {mode === 'password' && (
+          <form onSubmit={submitPassword} noValidate>
+            {emailField(false)}
+            <PasswordInput label="Password" name="password" value={form.password} onChange={field('password')} placeholder="Enter your password" autoComplete="current-password" />
+            <div style={{ textAlign: 'right', marginTop: -6, marginBottom: 16 }}>
+              <button type="button" className="link-btn" onClick={() => switchMode('reset')}>Forgot password?</button>
             </div>
-            <PasswordInput
-              label="Password"
-              name="password"
-              value={form.password}
-              onChange={handleChange}
-              placeholder="Enter your password"
-              autoComplete="current-password"
-            />
-            <button type="submit" className="btn btn-neon btn-full btn-lg" style={{ marginTop: '8px' }} disabled={loading} aria-busy={loading}>
-              {loading ? <span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> : 'Sign In →'}
-            </button>
+            <Button type="submit" variant="primary" size="lg" block loading={loading}>Sign in</Button>
           </form>
-        ) : (
-          <form onSubmit={handleOTPLogin} noValidate>
-            <div className="field">
-              <label className="field-label" htmlFor="login-otp-email">Email Address</label>
-              <div style={{ position: 'relative' }}>
-                <input id="login-otp-email" type="email" className="inp" name="email" value={form.email} onChange={handleChange} placeholder="you@college.edu" autoComplete="email" required disabled={otpSent} />
-                {otpSent && <button type="button" onClick={() => { setOtpSent(false); setForm(f => ({ ...f, otp: '' })); setSuccess(''); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--neon)', fontSize: '0.7rem', fontWeight: 600 }}>Change</button>}
-              </div>
-            </div>
-            
-            {!otpSent ? (
-              <button type="button" className="btn btn-ghost btn-full btn-lg" onClick={handleRequestOTP} disabled={loading || !form.email}>
-                {loading ? 'Sending...' : 'Send OTP Code'}
-              </button>
+        )}
+
+        {mode === 'otp' && (
+          <form onSubmit={submitOtp} noValidate>
+            {emailField(codeSent)}
+            {!codeSent ? (
+              <Button variant="primary" size="lg" block loading={loading} disabled={!form.email} onClick={sendCode}>Send code</Button>
             ) : (
               <>
                 <div className="field">
-                  <label className="field-label" htmlFor="login-otp-code">Enter 6-digit OTP</label>
-                  <input
-                    id="login-otp-code"
-                    type="text"
-                    className="inp"
-                    name="otp"
-                    value={form.otp}
-                    onChange={e => setForm(f => ({ ...f, otp: e.target.value.replace(/\D/g, '').slice(0, 6) }))}
-                    maxLength={6}
-                    placeholder="· · · · · ·"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="[0-9]*"
-                    style={{ textAlign: 'center', letterSpacing: '0.4em', fontSize: '1.2rem' }}
-                    required
-                  />
+                  <span className="label" id="otp-label" style={{ textAlign: 'center' }}>Enter the 6-digit code</span>
+                  <OtpInput value={form.otp} onChange={(otp) => setForm((f) => ({ ...f, otp }))} autoFocus />
                 </div>
-                <button type="submit" className="btn btn-neon btn-full btn-lg" disabled={loading || form.otp.length !== 6} aria-busy={loading}>
-                  {loading ? 'Verifying...' : 'Verify & Sign In'}
-                </button>
-                <div className="otp-resend-row">
-                  {cooldown > 0
-                    ? <>Didn't receive the code? Resend in {cooldown}s</>
-                    : <>Didn't receive the code?{' '}
-                        <button type="button" className="otp-resend-btn" onClick={handleResendOTP} disabled={loading}>Resend OTP</button>
-                      </>}
-                </div>
+                <Button type="submit" variant="primary" size="lg" block loading={loading} disabled={form.otp.length !== 6}>Verify &amp; sign in</Button>
+                {resend}
+                <p className="hint" style={{ textAlign: 'center', marginTop: 8 }}>
+                  <button type="button" className="link-btn" onClick={() => { setCodeSent(false); setInfo(''); }}>Use a different email</button>
+                </p>
               </>
             )}
           </form>
         )}
 
-        <p className="auth-foot">
-          No account?{' '}
-          <Link to="/register" className="auth-link">Create one free</Link>
-        </p>
+        {mode === 'reset' && (
+          <form onSubmit={submitReset} noValidate>
+            {emailField(codeSent)}
+            {!codeSent ? (
+              <>
+                <Button variant="primary" size="lg" block loading={loading} disabled={!form.email} onClick={sendCode}>Email me a code</Button>
+                <p className="auth-foot"><button type="button" className="link-btn" onClick={() => switchMode('password')}>Back to log in</button></p>
+              </>
+            ) : (
+              <>
+                <div className="field">
+                  <span className="label" style={{ textAlign: 'center' }}>Enter the 6-digit code</span>
+                  <OtpInput value={form.otp} onChange={(otp) => setForm((f) => ({ ...f, otp }))} autoFocus />
+                </div>
+                <PasswordInput label="New password" name="newPassword" value={form.newPassword} onChange={field('newPassword')} autoComplete="new-password" showStrength hint={`At least ${MIN_PASSWORD} characters.`} />
+                <Button type="submit" variant="primary" size="lg" block loading={loading}>Set new password</Button>
+                {resend}
+              </>
+            )}
+          </form>
+        )}
+
+        <p className="auth-foot">New here? <Link to="/register">Create an account</Link></p>
       </div>
     </div>
   );

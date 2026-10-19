@@ -1,89 +1,74 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { MessageCircle } from 'lucide-react';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
-import Spinner from '../components/Spinner';
+import { getErrorMessage } from '../utils/errorMessage';
+import { CATEGORY_ICONS } from '../constants';
+import { assetUrl } from '../utils/assets';
+import { timeAgo } from '../utils/format';
+import useDocumentTitle from '../hooks/useDocumentTitle';
+import Button from '../components/Button';
+import PageHeader from '../components/PageHeader';
+import { EmptyState, ErrorState, ListSkeleton } from '../components/States';
 
 export default function ChatList() {
+  useDocumentTitle('Messages');
   const { user } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    API.get('/messages/conversations')
-      .then(({ data }) => { setConversations(data); setLoading(false); })
-      .catch((err) => { console.error(err); setLoading(false); });
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await API.get('/messages/conversations');
+      setConversations(data);
+    } catch (err) {
+      setError(getErrorMessage(err, 'We couldn’t load your messages.'));
+    } finally {
+      setLoading(false);
+    }
   }, []);
-
-  if (loading) return <Spinner text="Loading your messages..." />;
+  useEffect(() => { load(); }, [load]);
 
   return (
-    <div className="page-wrap" style={{ maxWidth: '800px' }}>
-      <div className="pg-header">
-        <div className="pg-kicker">Secure Communication</div>
-        <h1 className="pg-title">My Messages</h1>
-        <p className="pg-sub">Coordinate handovers and verify items</p>
-      </div>
+    <div className="container container-narrow page">
+      <PageHeader title="Messages" subtitle="Chat to confirm details and arrange handovers." />
 
-      {conversations.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">💬</div>
-          <div className="empty-state-title">No conversations yet</div>
-          <p className="empty-state-sub">Start a chat from any item's detail page to coordinate a return.</p>
-          <Link to="/items" className="btn btn-neon">Browse All Items</Link>
-        </div>
+      {loading ? <ListSkeleton /> : error ? <ErrorState message={error} onRetry={load} /> : conversations.length === 0 ? (
+        <EmptyState icon={MessageCircle} title="No conversations yet" action={<Button to="/items" variant="primary">Browse items</Button>}>
+          Open an item and choose “Message the finder” or “I found this” to start a private chat.
+        </EmptyState>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {conversations.map((conv, i) => {
-            const otherUser = conv.participants.find(p => p._id !== user?._id);
+        <ul className="list" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+          {conversations.map((conv) => {
+            const other = conv.participants.find((p) => String(p._id) !== String(user?._id));
             const item = conv.itemId;
-            const lastMsg = conv.lastMessage;
-            
+            const Icon = CATEGORY_ICONS[item?.category] || CATEGORY_ICONS.Other;
+            const src = assetUrl(item?.imageUrl);
+            const last = conv.lastMessage;
             return (
-              <Link 
-                to={`/messages/${conv._id}`} 
-                key={conv._id} 
-                className="claim-row anim-up" 
-                style={{ 
-                  animationDelay: `${i * 0.05}s`, 
-                  textDecoration: 'none', 
-                  color: 'inherit',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '16px'
-                }}
-              >
-                {/* Item Thumbnail */}
-                <div className="claim-thumb" style={{ width: '60px', height: '60px', borderRadius: '8px', flexShrink: 0 }}>
-                  {item?.imageUrl ? (
-                    <img src={`${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`} alt={item?.title || 'Item thumbnail'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  ) : <span>📦</span>}
-                </div>
-
-                {/* Content */}
-                <div style={{ flexGrow: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--text)' }}>
-                      {otherUser?.name || 'Unknown'}
+              <li key={conv._id}>
+                <Link to={`/messages/${conv._id}`} className="list-row" style={{ textDecoration: 'none', color: 'inherit' }}>
+                  <div className="thumb">{src ? <img src={src} alt="" loading="lazy" /> : <Icon size={26} aria-hidden="true" />}</div>
+                  <div className="list-main">
+                    <div className="row spread">
+                      <span className="list-title truncate" style={{ fontWeight: conv.unreadCount ? 700 : 600 }}>{other?.name || 'Student'}</span>
+                      <span className="muted" style={{ fontSize: '0.8rem', flexShrink: 0 }}>{timeAgo(conv.updatedAt)}</span>
                     </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-3)' }}>
-                      {new Date(conv.updatedAt).toLocaleDateString()}
+                    <div className="list-meta" style={{ marginTop: 0 }}><span className="truncate">About: {item?.title}</span></div>
+                    <div className="truncate" style={{ color: conv.unreadCount ? 'var(--text)' : 'var(--text-3)', fontSize: '0.9rem', marginTop: 2 }}>
+                      {last?.content || 'No messages yet — say hello.'}
                     </div>
                   </div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--neon)', fontWeight: 500, marginBottom: '2px' }}>
-                    Re: {item?.title}
-                  </div>
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-3)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {lastMsg?.content || 'Started a conversation...'}
-                  </div>
-                </div>
-
-                {/* Chevron */}
-                <div style={{ color: 'var(--text-3)', fontSize: '1.2rem' }}>›</div>
-              </Link>
+                  {conv.unreadCount > 0 && <span className="unread-dot" aria-label={`${conv.unreadCount} unread`}>{conv.unreadCount}</span>}
+                </Link>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
     </div>
   );

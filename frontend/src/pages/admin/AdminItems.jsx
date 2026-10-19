@@ -1,141 +1,109 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { Search, Trash2 } from 'lucide-react';
 import API from '../../api/axios';
-import Spinner from '../../components/Spinner';
-import { AdminNav } from './AdminDashboard';
 import { useToast } from '../../context/ToastContext';
+import { useConfirm } from '../../context/ConfirmContext';
 import { getErrorMessage } from '../../utils/errorMessage';
+import { formatDate } from '../../utils/format';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
+import useDocumentTitle from '../../hooks/useDocumentTitle';
+import PageHeader from '../../components/PageHeader';
+import AdminNav from '../../components/AdminNav';
+import Button from '../../components/Button';
+import Pagination from '../../components/Pagination';
+import { TypeBadge, StatusBadge } from '../../components/Badge';
+import { EmptyState, ErrorState, PageLoader } from '../../components/States';
 
 export default function AdminItems() {
-  const [items, setItems]     = useState([]);
+  useDocumentTitle('Admin · Items');
+  const { showToast } = useToast();
+  const confirm = useConfirm();
+  const [data, setData] = useState({ items: [], total: 0, pages: 1 });
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [type, setType] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [deleting, setDeleting] = useState(null);
-  const [search, setSearch]   = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
-  const { showToast } = useToast();
+  const [busyId, setBusyId] = useState(null);
+  const q = useDebouncedValue(search.trim(), 350);
 
-  useEffect(() => {
-    API.get('/admin/items')
-      .then(({ data }) => { setItems(data); setLoading(false); })
-      .catch((err) => { setError(getErrorMessage(err, 'Could not load items.')); setLoading(false); });
-  }, []);
-
-  const handleDelete = async id => {
-    if (!window.confirm('Delete this item permanently?')) return;
-    setDeleting(id);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      await API.delete(`/admin/items/${id}`);
-      setItems(items.filter(i => i._id !== id));
-      showToast('Item deleted.', 'success');
+      const { data: res } = await API.get('/admin/items', { params: { q: q || undefined, status: status || undefined, type: type || undefined, page, limit: 20 } });
+      setData(res);
     } catch (err) {
-      showToast(getErrorMessage(err, 'Failed to delete.'), 'error');
-    } finally {
-      setDeleting(null);
-    }
+      setError(getErrorMessage(err, 'We couldn’t load items.'));
+    } finally { setLoading(false); }
+  }, [q, status, type, page]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { setPage(1); }, [q, status, type]);
+
+  const remove = async (item) => {
+    const ok = await confirm({ title: 'Delete this item?', message: `“${item.title}” and its claims and chats will be permanently removed.`, confirmLabel: 'Delete item', danger: true });
+    if (!ok) return;
+    setBusyId(item._id);
+    try {
+      await API.delete(`/admin/items/${item._id}`);
+      showToast('Item deleted.', 'success');
+      await load();
+    } catch (err) { showToast(getErrorMessage(err, 'We couldn’t delete the item.'), 'error'); }
+    finally { setBusyId(null); }
   };
 
-  const filtered = items.filter(item =>
-    (!search ||
-      item.title?.toLowerCase().includes(search.toLowerCase()) ||
-      item.postedBy?.name?.toLowerCase().includes(search.toLowerCase()) ||
-      item.category?.toLowerCase().includes(search.toLowerCase())) &&
-    (!statusFilter || item.status === statusFilter) &&
-    (!typeFilter || item.type === typeFilter)
-  );
-
-  if (loading) return <Spinner text="Loading items…" />;
-
   return (
-    <div className="page-wrap">
-      <div className="pg-header">
-        <div className="pg-kicker">Admin</div>
-        <h1 className="pg-title">Manage Items</h1>
-        <p className="pg-sub">All posted items — {items.length} total</p>
-      </div>
-
+    <div className="container page">
+      <PageHeader title="Items" subtitle={`${data.total} item${data.total === 1 ? '' : 's'} match.`} />
       <AdminNav />
 
-      {error && <div className="alert-box alert-err" role="alert" style={{ marginBottom: 20 }}>⚠️ {error}</div>}
-
-      {/* Search + filters */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
-        <div className="search-box" style={{ maxWidth: 360, flex: '1 1 240px' }}>
-          <span className="search-icon">🔍</span>
-          <input
-            className="inp"
-            placeholder="Search by title, user, category…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ paddingLeft: 36 }}
-          />
+      <div className="filters">
+        <div className="filters-grid" style={{ gridTemplateColumns: undefined }}>
+          <div className="field">
+            <label className="label" htmlFor="adm-search">Search</label>
+            <div className="input-icon"><Search size={18} aria-hidden="true" /><input id="adm-search" className="input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Title, category, location or poster" /></div>
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="adm-type">Type</label>
+            <select id="adm-type" className="select" value={type} onChange={(e) => setType(e.target.value)}>
+              <option value="">All</option><option value="lost">Lost</option><option value="found">Found</option>
+            </select>
+          </div>
+          <div className="field">
+            <label className="label" htmlFor="adm-status">Status</label>
+            <select id="adm-status" className="select" value={status} onChange={(e) => setStatus(e.target.value)}>
+              <option value="">All</option><option value="Open">Open</option><option value="Claimed">Matched</option><option value="Closed">Closed</option>
+            </select>
+          </div>
         </div>
-        <select className="inp inp-select" style={{ maxWidth: 160 }} value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
-          <option value="">All Types</option>
-          <option value="lost">Lost</option>
-          <option value="found">Found</option>
-        </select>
-        <select className="inp inp-select" style={{ maxWidth: 160 }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-          <option value="">All Statuses</option>
-          <option value="Open">Open</option>
-          <option value="Claimed">Claimed</option>
-          <option value="Closed">Closed</option>
-        </select>
       </div>
 
-      {(statusFilter || typeFilter || search) && (
-        <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', marginTop: -12, marginBottom: 16 }}>
-          Showing {filtered.length} of {items.length} items
-        </p>
+      {loading ? <PageLoader text="Loading items…" /> : error ? <ErrorState message={error} onRetry={load} /> : data.items.length === 0 ? (
+        <EmptyState title="No items found">Try changing the search or filters.</EmptyState>
+      ) : (
+        <>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>Item</th><th>Type</th><th>Status</th><th>Posted by</th><th>Posted</th><th className="t-right">Actions</th></tr></thead>
+              <tbody>
+                {data.items.map((item) => (
+                  <tr key={item._id}>
+                    <td><Link to={`/items/${item._id}`} style={{ fontWeight: 600 }}>{item.title}</Link><div className="cell-sub">{item.category} · {item.location}</div></td>
+                    <td><TypeBadge type={item.type} /></td>
+                    <td><StatusBadge status={item.status} /></td>
+                    <td>{item.postedBy?.name || '—'}<div className="cell-sub">{item.postedBy?.email}</div></td>
+                    <td>{formatDate(item.createdAt)}</td>
+                    <td className="t-right"><Button size="sm" variant="danger" icon={Trash2} disabled={busyId === item._id} onClick={() => remove(item)} aria-label={`Delete ${item.title}`}>Delete</Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={data.page || page} pages={data.pages} onChange={setPage} />
+        </>
       )}
-
-      <div className="tbl-wrap anim-in">
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Type</th>
-              <th>Category</th>
-              <th>Posted By</th>
-              <th>Status</th>
-              <th>Date</th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr><td colSpan={7} style={{ textAlign: 'center', padding: '32px', color: 'var(--text-3)' }}>No items found</td></tr>
-            ) : filtered.map(item => (
-              <tr key={item._id}>
-                <td>
-                  <Link to={`/items/${item._id}`} style={{ color: 'var(--neon)', fontWeight: 700, textDecoration: 'none', fontFamily: 'var(--font-display)', fontSize: '0.875rem' }}>
-                    {item.title}
-                  </Link>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-3)', marginTop: 2 }}>📍 {item.location}</div>
-                </td>
-                <td><span className={`badge-pill ${item.type === 'lost' ? 'badge-lost' : 'badge-found'}`}>{item.type}</span></td>
-                <td style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>{item.category}</td>
-                <td>
-                  <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text)' }}>{item.postedBy?.name}</div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-3)' }}>{item.postedBy?.email}</div>
-                </td>
-                <td><span className={`badge-pill badge-${item.status}`}>{item.status}</span></td>
-                <td style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>{new Date(item.createdAt).toLocaleDateString()}</td>
-                <td style={{ textAlign: 'right' }}>
-                  <button
-                    className="btn btn-danger-soft btn-sm"
-                    onClick={() => handleDelete(item._id)}
-                    disabled={deleting === item._id}
-                  >
-                    {deleting === item._id ? '…' : '🗑️ Delete'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }
