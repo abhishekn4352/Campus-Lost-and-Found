@@ -1,96 +1,108 @@
 import { Suspense, lazy } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { NotificationsProvider } from './context/NotificationsContext';
+import { ConfirmProvider } from './context/ConfirmContext';
 import Navbar from './components/Navbar';
-import Spinner from './components/Spinner';
+import Footer from './components/Footer';
+import ErrorBoundary from './components/ErrorBoundary';
+import { PageLoader } from './components/States';
 import Home from './pages/Home';
-import Dashboard from './pages/Dashboard';
-import Login from './pages/Login';
-import Register from './pages/Register';
-import ItemList from './pages/ItemList';
-import ItemDetail from './pages/ItemDetail';
-import PostItem from './pages/PostItem';
-import MyPosts from './pages/MyPosts';
-import MyClaims from './pages/MyClaims';
-import Profile from './pages/Profile';
-import ChatList from './pages/ChatList';
-import ChatWindow from './pages/ChatWindow';
-import OtpVerify from './pages/OtpVerify';
 
-// Code-split: the four Admin pages are only ever needed by admin
-// accounts, a small minority of users. Previously every student
-// downloaded this code on every single page load despite never using
-// it. Lazy-loading means it's only fetched the first time someone
-// actually navigates into /admin — at the cost of a brief loading state
-// on that first admin navigation, which is a good trade for a page only
-// admins ever reach.
+// Every screen except the landing page is code-split, so a first visit only
+// downloads what it actually shows.
+const ItemList = lazy(() => import('./pages/ItemList'));
+const ItemDetail = lazy(() => import('./pages/ItemDetail'));
+const Login = lazy(() => import('./pages/Login'));
+const Register = lazy(() => import('./pages/Register'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const PostItem = lazy(() => import('./pages/PostItem'));
+const MyPosts = lazy(() => import('./pages/MyPosts'));
+const Claims = lazy(() => import('./pages/Claims'));
+const Profile = lazy(() => import('./pages/Profile'));
+const ChatList = lazy(() => import('./pages/ChatList'));
+const ChatWindow = lazy(() => import('./pages/ChatWindow'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
-const AdminItems     = lazy(() => import('./pages/admin/AdminItems'));
-const AdminClaims    = lazy(() => import('./pages/admin/AdminClaims'));
-const AdminUsers     = lazy(() => import('./pages/admin/AdminUsers'));
+const AdminItems = lazy(() => import('./pages/admin/AdminItems'));
+const AdminClaims = lazy(() => import('./pages/admin/AdminClaims'));
+const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 
 function PrivateRoute({ children }) {
   const { isLoggedIn, loading } = useAuth();
-  if (loading) return <Spinner text="Authenticating..." />;
-  return isLoggedIn() ? children : <Navigate to="/login" />;
+  const location = useLocation();
+  if (loading) return <PageLoader text="Checking your session…" />;
+  // Remember where they were going so login can send them back.
+  return isLoggedIn() ? children : <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
 }
 
 function AdminRoute({ children }) {
-  const { isAdmin, loading } = useAuth();
-  if (loading) return <Spinner text="Checking permissions..." />;
-  return isAdmin() ? children : <Navigate to="/" />;
+  const { isAdmin, isLoggedIn, loading } = useAuth();
+  const location = useLocation();
+  if (loading) return <PageLoader text="Checking permissions…" />;
+  if (!isLoggedIn()) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  return isAdmin() ? children : <Navigate to="/" replace />;
 }
+
+// Signed-in people have no reason to see the login/register forms.
+function GuestRoute({ children }) {
+  const { isLoggedIn, loading } = useAuth();
+  if (loading) return <PageLoader text="Loading…" />;
+  return isLoggedIn() ? <Navigate to="/dashboard" replace /> : children;
+}
+
+const priv = (el) => <PrivateRoute>{el}</PrivateRoute>;
+const admin = (el) => <AdminRoute>{el}</AdminRoute>;
 
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/"               element={<Home />} />
-      <Route path="/dashboard"      element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-      <Route path="/login"          element={<Login />} />
-      <Route path="/register"       element={<Register />} />
-      <Route path="/items"          element={<ItemList />} />
-      <Route path="/items/:id"      element={<ItemDetail />} />
-      <Route path="/post-item"      element={<PrivateRoute><PostItem /></PrivateRoute>} />
-      <Route path="/my-posts"       element={<PrivateRoute><MyPosts /></PrivateRoute>} />
-      <Route path="/my-claims"      element={<PrivateRoute><MyClaims /></PrivateRoute>} />
-      <Route path="/profile"        element={<PrivateRoute><Profile /></PrivateRoute>} />
-      <Route path="/messages"       element={<PrivateRoute><ChatList /></PrivateRoute>} />
-      <Route path="/messages/:id"   element={<PrivateRoute><ChatWindow /></PrivateRoute>} />
-      <Route path="/verify-otp/:claimId" element={<PrivateRoute><OtpVerify /></PrivateRoute>} />
-      <Route path="/admin" element={
-        <AdminRoute>
-          <Suspense fallback={<Spinner text="Loading admin panel..." />}><AdminDashboard /></Suspense>
-        </AdminRoute>
-      } />
-      <Route path="/admin/items" element={
-        <AdminRoute>
-          <Suspense fallback={<Spinner text="Loading admin panel..." />}><AdminItems /></Suspense>
-        </AdminRoute>
-      } />
-      <Route path="/admin/claims" element={
-        <AdminRoute>
-          <Suspense fallback={<Spinner text="Loading admin panel..." />}><AdminClaims /></Suspense>
-        </AdminRoute>
-      } />
-      <Route path="/admin/users" element={
-        <AdminRoute>
-          <Suspense fallback={<Spinner text="Loading admin panel..." />}><AdminUsers /></Suspense>
-        </AdminRoute>
-      } />
-    </Routes>
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/items" element={<ItemList />} />
+        <Route path="/items/:id" element={<ItemDetail />} />
+        <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
+        <Route path="/register" element={<GuestRoute><Register /></GuestRoute>} />
+
+        <Route path="/dashboard" element={priv(<Dashboard />)} />
+        <Route path="/post-item" element={priv(<PostItem />)} />
+        <Route path="/my-posts" element={priv(<MyPosts />)} />
+        <Route path="/claims" element={priv(<Claims />)} />
+        <Route path="/my-claims" element={<Navigate to="/claims" replace />} />
+        <Route path="/profile" element={priv(<Profile />)} />
+        <Route path="/messages" element={priv(<ChatList />)} />
+        <Route path="/messages/:id" element={priv(<ChatWindow />)} />
+
+        <Route path="/admin" element={admin(<AdminDashboard />)} />
+        <Route path="/admin/items" element={admin(<AdminItems />)} />
+        <Route path="/admin/claims" element={admin(<AdminClaims />)} />
+        <Route path="/admin/users" element={admin(<AdminUsers />)} />
+
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </Suspense>
   );
 }
 
 export default function App() {
   return (
-    <ToastProvider>
-      <AuthProvider>
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <Navbar />
-          <AppRoutes />
-        </BrowserRouter>
-      </AuthProvider>
-    </ToastProvider>
+    <ErrorBoundary>
+      <ToastProvider>
+        <AuthProvider>
+          <NotificationsProvider>
+            <ConfirmProvider>
+              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                <Navbar />
+                <main id="main" tabIndex={-1}>
+                  <AppRoutes />
+                </main>
+                <Footer />
+              </BrowserRouter>
+            </ConfirmProvider>
+          </NotificationsProvider>
+        </AuthProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }
