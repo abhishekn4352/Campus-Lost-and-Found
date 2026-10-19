@@ -1,72 +1,36 @@
 import { Link } from 'react-router-dom';
+import { MapPin, Clock } from 'lucide-react';
+import { CATEGORY_ICONS } from '../constants';
+import { assetUrl } from '../utils/assets';
+import { timeAgo } from '../utils/format';
+import { TypeBadge } from './Badge';
 
-const CATEGORY_ICONS = {
-  Electronics: '💻',
-  Books: '📚',
-  'ID Card': '🪪',
-  Keys: '🔑',
-  Wallet: '👛',
-  Clothing: '👕',
-  Sports: '⚽',
-  Other: '📦',
-};
-
-export default function ItemCard({ item }) {
-  const icon = CATEGORY_ICONS[item.category] || '📦';
-  const imgSrc = item.imageUrl
-    ? `${import.meta.env.VITE_API_URL.replace('/api', '')}${item.imageUrl}`
-    : null;
-
-  const timeAgo = (date) => {
-    const diff = Date.now() - new Date(date).getTime();
-    const days = Math.floor(diff / 86400000);
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days}d ago`;
-    if (days < 30) return `${Math.floor(days / 7)}w ago`;
-    return `${Math.floor(days / 30)}mo ago`;
-  };
-
+export function ItemMedia({ item, className, size = 44 }) {
+  const Icon = CATEGORY_ICONS[item.category] || CATEGORY_ICONS.Other;
+  const src = assetUrl(item.imageUrl);
   return (
-    <Link to={`/items/${item._id}`} className="item-card" style={{ textDecoration: 'none' }}>
-      <div className="item-img-wrap">
-        {imgSrc ? (
-          <img src={imgSrc} alt={item.title} loading="lazy" />
-        ) : (
-          <div className="item-img-placeholder">{icon}</div>
-        )}
-        <span className={`item-type-badge ${item.type === 'lost' ? 'badge-lost-pill' : 'badge-found-pill'}`}>
-          {item.type === 'lost' ? '● Lost' : '● Found'}
-        </span>
+    <div className={`${className} is-${item.type}`}>
+      {src ? <img src={src} alt={item.title} loading="lazy" /> : <Icon size={size} strokeWidth={1.6} aria-label={item.category} role="img" />}
+    </div>
+  );
+}
+
+// A claim-ticket: punched hole, image, tear-off stub with where/when.
+export default function ItemCard({ item, compact = false }) {
+  return (
+    <Link to={`/items/${item._id}`} className={`ticket ${compact ? 'ticket-compact' : ''}`}>
+      <div style={{ position: 'relative' }}>
+        <ItemMedia item={item} className="ticket-media" />
+        <div className="ticket-type"><TypeBadge type={item.type} /></div>
       </div>
-
-      <div className="item-card-body">
-        <h3 className="item-card-title">{item.title}</h3>
-        <p className="item-card-desc">{item.description}</p>
-
-        <div className="item-meta">
-          <div className="item-meta-row">
-            <span>📍</span>
-            <span>{item.location}</span>
-          </div>
-          <div className="item-meta-row">
-            <span>🏷️</span>
-            <span>{item.category}</span>
-          </div>
-          <div className="item-meta-row">
-            <span>🕐</span>
-            <span>{timeAgo(item.createdAt)}</span>
-          </div>
-        </div>
+      <div className="ticket-body">
+        <h3 className="ticket-title">{item.title}</h3>
+        {!compact && <p className="ticket-desc">{item.description}</p>}
       </div>
-
-      <div className="item-card-footer" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span className={`badge-pill ${item.type === 'lost' ? 'badge-lost' : 'badge-found'}`}>
-          {item.type}
-        </span>
-        <span style={{ fontSize: '0.78rem', color: 'var(--neon)', fontWeight: 600, fontFamily: 'var(--font-display)' }}>
-          View Details →
-        </span>
+      <div className="ticket-tear" aria-hidden="true" />
+      <div className="ticket-foot">
+        <span><MapPin size={15} aria-hidden="true" /><span className="truncate">{item.location}</span></span>
+        <span><Clock size={15} aria-hidden="true" />{timeAgo(item.createdAt)}</span>
       </div>
     </Link>
   );

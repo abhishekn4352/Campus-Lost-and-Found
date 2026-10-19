@@ -1,46 +1,55 @@
-import { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import {
+  Bell, Search, Plus, MessageCircle, Inbox, User, LogOut, Sun, Moon, Menu, X,
+  ShieldCheck, HandHelping,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useToast } from '../context/ToastContext';
-import API from '../api/axios';
+import { useNotifications } from '../context/NotificationsContext';
+import { initials, plural } from '../utils/format';
+import Button from './Button';
+
+const countLabel = (n) => (n > 9 ? '9+' : String(n));
+
+function isActive(pathname, to) {
+  return pathname === to || (to !== '/' && pathname.startsWith(`${to}/`));
+}
 
 export default function Navbar() {
   const { user, isLoggedIn, isAdmin, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { showToast } = useToast();
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [pendingClaimsCount, setPendingClaimsCount] = useState(0);
+  const { unreadMessages, claimsToReview, myPendingClaims } = useNotifications();
+  const [menu, setMenu] = useState(null); // 'account' | 'notifications' | null
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [notifMenuOpen, setNotifMenuOpen] = useState(false);
   const navigate = useNavigate();
-  const location = useLocation();
+  const { pathname } = useLocation();
+  const loggedIn = isLoggedIn();
 
-  // Close either open dropdown whenever the route changes, so navigating
-  // away doesn't leave a stale menu open.
-  useEffect(() => { setAccountMenuOpen(false); setNotifMenuOpen(false); }, [location.pathname]);
+  // Close menus/drawer on navigation.
+  useEffect(() => { setMenu(null); setDrawerOpen(false); }, [pathname]);
+
+  // Reserve room for the mobile bottom bar only when it is shown.
+  useEffect(() => {
+    document.body.classList.toggle('has-bottom-nav', loggedIn);
+    return () => document.body.classList.remove('has-bottom-nav');
+  }, [loggedIn]);
 
   useEffect(() => {
-    if (!isLoggedIn()) return;
-    const fetchActivity = async () => {
-      try {
-        const [convsRes, claimsRes] = await Promise.all([
-          API.get('/messages/conversations'),
-          API.get('/claims/my-claims'),
-        ]);
-        const unread = convsRes.data.reduce((acc, conv) => acc + (conv.unreadCount || 0), 0);
-        setUnreadCount(unread);
-        setPendingClaimsCount(claimsRes.data.filter(c => c.status === 'pending').length);
-      } catch (err) { console.error(err); }
-    };
-    fetchActivity();
-    const interval = setInterval(fetchActivity, 15000); // 15s refresh
-    return () => clearInterval(interval);
-  }, [isLoggedIn()]);
+    if (!menu) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setMenu(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menu]);
+
+  const claimsBadge = claimsToReview + myPendingClaims;
+  const totalNotifications = unreadMessages + claimsToReview;
 
   const handleLogout = async () => {
-    if (loggingOut) return; // prevent a rapid double-click from stacking duplicate toasts/requests
+    if (loggingOut) return;
     setLoggingOut(true);
     try {
       await logout();
@@ -51,115 +60,76 @@ export default function Navbar() {
     }
   };
 
-  const totalNotifications = unreadCount + pendingClaimsCount;
-
-  const navLinks = [
-    ...(isLoggedIn() ? [
-      { to: '/dashboard', label: 'Dashboard' },
-    ] : []),
+  const links = [
+    ...(loggedIn ? [{ to: '/dashboard', label: 'Dashboard' }] : []),
     { to: '/items', label: 'Browse' },
-    ...(isLoggedIn() ? [
-      { to: '/post-item', label: 'Report Item' },
-      { to: '/messages', label: `Messages${unreadCount > 0 ? ` (${unreadCount})` : ''}` },
-      { to: '/my-posts', label: 'My Posts' },
-      { to: '/my-claims', label: `My Claims${pendingClaimsCount > 0 ? ` (${pendingClaimsCount})` : ''}` },
+    ...(loggedIn ? [
+      { to: '/my-posts', label: 'My posts' },
+      { to: '/claims', label: 'Claims', count: claimsBadge },
+      { to: '/messages', label: 'Messages', count: unreadMessages },
     ] : []),
-    ...(isAdmin() ? [{ to: '/admin', label: 'Admin', admin: true }] : []),
+    ...(isAdmin() ? [{ to: '/admin', label: 'Admin' }] : []),
   ];
 
-  const initials = user?.name ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '?';
+  const renderLink = (link) => (
+    <Link key={link.to} to={link.to} className="nav-link" aria-current={isActive(pathname, link.to) ? 'page' : undefined}>
+      {link.label}
+      {link.count > 0 && <span className="nav-count" aria-label={`${link.count} new`}>{countLabel(link.count)}</span>}
+    </Link>
+  );
 
   return (
     <>
-    <nav className="navbar navbar-expand-lg navbar-premium py-0">
-      <div className="container">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', height: '64px' }}>
-          {/* Brand */}
-          <Link to={isLoggedIn() ? "/dashboard" : "/"} className="brand-logo">
-            <div className="brand-mark">🎒</div>
-            <span>CAMPUS <span className="brand-text-accent">L&F</span></span>
+      <a href="#main" className="skip-link">Skip to content</a>
+      <header className="nav">
+        <div className="container nav-inner">
+          <Link to={loggedIn ? '/dashboard' : '/'} className="brand" aria-label="Campus Lost & Found home">
+            <span className="brand-mark" aria-hidden="true"><Search size={17} strokeWidth={2.6} /></span>
+            <span>Lost &amp; Found</span>
           </Link>
 
-          {/* Desktop Nav */}
-          <div className="d-none d-lg-flex align-items-center gap-1">
-            {navLinks.map(link => (
-              <Link
-                key={link.to}
-                to={link.to}
-                className={`nav-link ${link.admin ? 'admin-link' : ''}`}
-                style={location.pathname === link.to || location.pathname.startsWith(link.to + '/') ? {
-                  color: link.admin ? 'var(--amber) !important' : 'var(--neon)',
-                  background: link.admin ? 'rgba(245,158,11,0.1)' : 'var(--neon-dim)',
-                } : {}}
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
+          <nav className="nav-links" aria-label="Main">{links.map(renderLink)}</nav>
 
-          {/* Right-hand cluster: Actions + hamburger toggle are grouped in
-              one flex container so they stay visually tight together
-              under the outer row's justify-content:space-between,
-              regardless of which pieces are hidden/shown at a given
-              breakpoint. Without this wrapper, hiding navLinks at tablet
-              width would leave the Actions block floating in the middle
-              of the bar (space-between distributes space between ALL
-              visible direct children equally) instead of sitting next to
-              the hamburger button on the right, as intended. */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {/* Actions — bell + account chip get their own, narrower
-                breakpoint (768px) than the full nav link list (992px):
-                a tablet-width screen has room for these compact controls
-                even though it doesn't have room for the whole text link
-                list, and without this they'd otherwise fall into a dead
-                zone (too wide for the bottom-nav, which is phone-only
-                below 768px; too narrow for the 992px desktop link list)
-                with no persistent notification/account access at all
-                except the hamburger menu. */}
-            <div className="d-none d-md-flex align-items-center gap-2">
-            <button
-              onClick={toggleTheme}
-              className="btn btn-ghost btn-sm"
-              style={{ width: '34px', height: '34px', padding: 0, justifyContent: 'center', fontSize: '1.2rem', borderRadius: '50%' }}
-              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-            >
-              {theme === 'dark' ? '☀️' : '🌙'}
+          <div className="nav-actions">
+            <button type="button" className="icon-btn" onClick={toggleTheme} aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
+              {theme === 'dark' ? <Sun size={20} aria-hidden="true" /> : <Moon size={20} aria-hidden="true" />}
             </button>
-            {isLoggedIn() ? (
+
+            {loggedIn ? (
               <>
-                {/* Notification bell — aggregates unread messages + pending
-                    claims from data already being fetched, rather than a
-                    new persisted notification model. */}
-                <div style={{ position: 'relative' }}>
+                <Button to="/post-item" variant="primary" size="sm" icon={Plus} className="desktop-only">Report item</Button>
+
+                <div className="menu-wrap">
                   <button
-                    className="btn btn-ghost btn-sm"
-                    style={{ width: '34px', height: '34px', padding: 0, justifyContent: 'center', fontSize: '1.1rem', borderRadius: '50%', position: 'relative' }}
-                    onClick={() => { setNotifMenuOpen(o => !o); setAccountMenuOpen(false); }}
+                    type="button" className="icon-btn"
+                    onClick={() => setMenu((m) => (m === 'notifications' ? null : 'notifications'))}
                     aria-label={`Notifications${totalNotifications > 0 ? `, ${totalNotifications} unread` : ''}`}
-                    aria-haspopup="true"
-                    aria-expanded={notifMenuOpen}
+                    aria-haspopup="true" aria-expanded={menu === 'notifications'}
                   >
-                    🔔
-                    {totalNotifications > 0 && (
-                      <span className="nav-badge" aria-hidden="true">{totalNotifications > 9 ? '9+' : totalNotifications}</span>
-                    )}
+                    <Bell size={20} aria-hidden="true" />
+                    {totalNotifications > 0 && <span className="dot-badge" aria-hidden="true">{countLabel(totalNotifications)}</span>}
                   </button>
-                  {notifMenuOpen && (
+                  {menu === 'notifications' && (
                     <>
-                      <div className="dropdown-overlay" onClick={() => setNotifMenuOpen(false)} />
-                      <div className="dropdown-panel" role="menu">
-                        {totalNotifications === 0 ? (
-                          <div className="dropdown-empty">You're all caught up 🎉</div>
+                      <div className="menu-overlay" onClick={() => setMenu(null)} />
+                      <div className="menu" role="menu" aria-label="Notifications">
+                        {unreadMessages + claimsToReview + myPendingClaims === 0 ? (
+                          <div className="menu-empty">You’re all caught up</div>
                         ) : (
                           <>
-                            {unreadCount > 0 && (
-                              <Link to="/messages" className="dropdown-item" role="menuitem" onClick={() => setNotifMenuOpen(false)}>
-                                💬 {unreadCount} unread message{unreadCount !== 1 ? 's' : ''}
+                            {unreadMessages > 0 && (
+                              <Link to="/messages" className="menu-item" role="menuitem">
+                                <MessageCircle size={18} aria-hidden="true" /> {plural(unreadMessages, 'unread message')}
                               </Link>
                             )}
-                            {pendingClaimsCount > 0 && (
-                              <Link to="/my-claims" className="dropdown-item" role="menuitem" onClick={() => setNotifMenuOpen(false)}>
-                                🔓 {pendingClaimsCount} pending claim{pendingClaimsCount !== 1 ? 's' : ''}
+                            {claimsToReview > 0 && (
+                              <Link to="/claims?tab=received" className="menu-item" role="menuitem">
+                                <Inbox size={18} aria-hidden="true" /> {plural(claimsToReview, 'claim')} to review
+                              </Link>
+                            )}
+                            {myPendingClaims > 0 && (
+                              <Link to="/claims" className="menu-item" role="menuitem">
+                                <HandHelping size={18} aria-hidden="true" /> {plural(myPendingClaims, 'claim')} awaiting a reply
                               </Link>
                             )}
                           </>
@@ -169,31 +139,24 @@ export default function Navbar() {
                   )}
                 </div>
 
-                {/* Account menu */}
-                <div style={{ position: 'relative' }}>
+                <div className="menu-wrap desktop-only">
                   <button
-                    onClick={() => { setAccountMenuOpen(o => !o); setNotifMenuOpen(false); }}
-                    style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '5px 12px 5px 6px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: '30px', cursor: 'pointer' }}
-                    aria-haspopup="true"
-                    aria-expanded={accountMenuOpen}
+                    type="button" className="account-btn"
+                    onClick={() => setMenu((m) => (m === 'account' ? null : 'account'))}
+                    aria-haspopup="true" aria-expanded={menu === 'account'} aria-label={`Account menu for ${user?.name}`}
                   >
-                    <div className="nav-avatar">{initials}</div>
-                    <div style={{ textAlign: 'left' }}>
-                      <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text)', fontFamily: 'var(--font-display)', lineHeight: 1, maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {user?.name}
-                      </div>
-                      <div style={{ fontSize: '0.65rem', color: 'var(--text-3)', fontFamily: 'var(--font-display)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-                        {user?.role === 'admin' ? 'Admin' : 'Member'}
-                      </div>
-                    </div>
+                    <span className="avatar" aria-hidden="true">{initials(user?.name)}</span>
+                    <span className="truncate" style={{ maxWidth: 110, fontWeight: 600, fontSize: '0.9rem' }}>{user?.name}</span>
                   </button>
-                  {accountMenuOpen && (
+                  {menu === 'account' && (
                     <>
-                      <div className="dropdown-overlay" onClick={() => setAccountMenuOpen(false)} />
-                      <div className="dropdown-panel" role="menu">
-                        <Link to="/profile" className="dropdown-item" role="menuitem" onClick={() => setAccountMenuOpen(false)}>👤 Profile</Link>
-                        <button className="dropdown-item dropdown-item-danger" role="menuitem" onClick={handleLogout} disabled={loggingOut}>
-                          {loggingOut ? 'Signing out…' : '🚪 Sign Out'}
+                      <div className="menu-overlay" onClick={() => setMenu(null)} />
+                      <div className="menu" role="menu">
+                        <div className="menu-title truncate">{user?.email}</div>
+                        <Link to="/profile" className="menu-item" role="menuitem"><User size={18} aria-hidden="true" /> Profile</Link>
+                        {isAdmin() && <Link to="/admin" className="menu-item" role="menuitem"><ShieldCheck size={18} aria-hidden="true" /> Admin panel</Link>}
+                        <button type="button" className="menu-item danger" role="menuitem" onClick={handleLogout} disabled={loggingOut}>
+                          <LogOut size={18} aria-hidden="true" /> {loggingOut ? 'Signing out…' : 'Sign out'}
                         </button>
                       </div>
                     </>
@@ -201,86 +164,58 @@ export default function Navbar() {
                 </div>
               </>
             ) : (
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <Link to="/login" className="btn btn-ghost btn-sm">Log In</Link>
-                <Link to="/register" className="btn btn-neon btn-sm">Join Free</Link>
-              </div>
+              <>
+                <Button to="/login" variant="ghost" size="sm">Log in</Button>
+                <Button to="/register" variant="primary" size="sm" className="desktop-only">Create account</Button>
+              </>
             )}
-            </div>
 
-            {/* Mobile Toggle */}
             <button
-              className="d-lg-none btn btn-ghost btn-sm"
-              data-bs-toggle="collapse"
-              data-bs-target="#mobileNav"
-              style={{ padding: '6px 10px' }}
+              type="button" className="icon-btn mobile-only"
+              onClick={() => setDrawerOpen((o) => !o)}
+              aria-label={drawerOpen ? 'Close menu' : 'Open menu'} aria-expanded={drawerOpen} aria-controls="mobile-drawer"
             >
-              ☰
+              {drawerOpen ? <X size={22} aria-hidden="true" /> : <Menu size={22} aria-hidden="true" />}
             </button>
           </div>
         </div>
+      </header>
 
-        {/* Mobile Nav */}
-        <div className="collapse d-lg-none" id="mobileNav">
-          <div style={{ borderTop: '1px solid var(--border)', padding: '12px 0 16px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {navLinks.map(link => (
-              <Link key={link.to} to={link.to} className={`nav-link ${link.admin ? 'admin-link' : ''}`} style={{ width: 'fit-content' }}>
-                {link.label}
-              </Link>
-            ))}
-            <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
-              {isLoggedIn() ? (
-                <>
-                  <Link to="/profile" className="btn btn-ghost btn-sm">👤 Profile</Link>
-                  <button className="btn btn-ghost btn-sm" onClick={handleLogout} disabled={loggingOut}>{loggingOut ? '…' : 'Sign Out'}</button>
-                </>
-              ) : (
-                <>
-                  <Link to="/login" className="btn btn-ghost btn-sm">Log In</Link>
-                  <Link to="/register" className="btn btn-neon btn-sm">Join Free</Link>
-                </>
-              )}
-            </div>
+      {drawerOpen && (
+        <div className="drawer mobile-only" id="mobile-drawer">
+          {links.map(renderLink)}
+          {loggedIn && <Link to="/profile" className="nav-link" aria-current={pathname === '/profile' ? 'page' : undefined}>Profile</Link>}
+          <div className="drawer-foot">
+            {loggedIn ? (
+              <>
+                <Button to="/post-item" variant="primary" icon={Plus}>Report item</Button>
+                <Button icon={LogOut} onClick={handleLogout} disabled={loggingOut}>{loggingOut ? 'Signing out…' : 'Sign out'}</Button>
+              </>
+            ) : (
+              <>
+                <Button to="/register" variant="primary">Create account</Button>
+                <Button to="/login">Log in</Button>
+              </>
+            )}
           </div>
         </div>
-      </div>
-    </nav>
+      )}
 
-    {/* Mobile bottom nav — one-tap access to the core actions, instead of
-        requiring the hamburger menu for everything. Phone-width only
-        (see .bottom-nav's media query); tablet/desktop keep using the
-        top nav, which already has room for full labels. Logged-in only,
-        since every destination here requires auth anyway. */}
-    {isLoggedIn() && (
-      <nav className="bottom-nav" aria-label="Primary">
-        <Link to="/items" className={`bottom-nav-item ${location.pathname === '/items' ? 'active' : ''}`}>
-          <span className="bottom-nav-icon">🔍</span>
-          <span>Browse</span>
-        </Link>
-        <Link to="/post-item" className={`bottom-nav-item ${location.pathname === '/post-item' ? 'active' : ''}`}>
-          <span className="bottom-nav-icon">➕</span>
-          <span>Report</span>
-        </Link>
-        <Link to="/messages" className={`bottom-nav-item ${location.pathname.startsWith('/messages') ? 'active' : ''}`}>
-          <span className="bottom-nav-icon" style={{ position: 'relative' }}>
-            💬
-            {unreadCount > 0 && <span className="nav-badge" style={{ top: -4, right: -8 }}>{unreadCount > 9 ? '9+' : unreadCount}</span>}
-          </span>
-          <span>Chat</span>
-        </Link>
-        <Link to="/my-claims" className={`bottom-nav-item ${location.pathname === '/my-claims' ? 'active' : ''}`}>
-          <span className="bottom-nav-icon" style={{ position: 'relative' }}>
-            🙋
-            {pendingClaimsCount > 0 && <span className="nav-badge" style={{ top: -4, right: -8 }}>{pendingClaimsCount > 9 ? '9+' : pendingClaimsCount}</span>}
-          </span>
-          <span>Claims</span>
-        </Link>
-        <Link to="/profile" className={`bottom-nav-item ${location.pathname === '/profile' ? 'active' : ''}`}>
-          <span className="bottom-nav-icon">👤</span>
-          <span>Profile</span>
-        </Link>
-      </nav>
-    )}
+      {loggedIn && (
+        <nav className="bottom-nav" aria-label="Primary">
+          <Link to="/items" aria-current={pathname === '/items' ? 'page' : undefined}><Search size={22} aria-hidden="true" /><span>Browse</span></Link>
+          <Link to="/post-item" aria-current={pathname === '/post-item' ? 'page' : undefined}><Plus size={22} aria-hidden="true" /><span>Report</span></Link>
+          <Link to="/messages" aria-current={isActive(pathname, '/messages') ? 'page' : undefined}>
+            <MessageCircle size={22} aria-hidden="true" /><span>Chat</span>
+            {unreadMessages > 0 && <span className="dot-badge" aria-label={`${unreadMessages} unread`}>{countLabel(unreadMessages)}</span>}
+          </Link>
+          <Link to="/claims" aria-current={isActive(pathname, '/claims') ? 'page' : undefined}>
+            <Inbox size={22} aria-hidden="true" /><span>Claims</span>
+            {claimsBadge > 0 && <span className="dot-badge" aria-label={`${claimsBadge} pending`}>{countLabel(claimsBadge)}</span>}
+          </Link>
+          <Link to="/profile" aria-current={pathname === '/profile' ? 'page' : undefined}><User size={22} aria-hidden="true" /><span>Profile</span></Link>
+        </nav>
+      )}
     </>
   );
 }
