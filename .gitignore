@@ -36,3 +36,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# User uploads (served from disk; keep the folder, not the files)
+backend/uploads/*
+!backend/uploads/.gitkeep

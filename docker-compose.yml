@@ -1,0 +1,38 @@
+# One-command local/production-like run:   docker compose up --build
+# Then open http://localhost:8080 and create an admin with:
+#   docker compose exec backend node scripts/seedAdmin.js
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on: [mongo]
+    env_file:
+      - ./backend/.env
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      MONGO_URI: mongodb://mongo:27017/campus_lost_found
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (32+ random characters)}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      EMAIL_USER: ${EMAIL_USER:?Set EMAIL_USER in .env}
+      EMAIL_PASS: ${EMAIL_PASS:?Set EMAIL_PASS in .env}
+      TRUST_PROXY: 1
+    volumes:
+      - uploads:/data/uploads
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on: [backend]
+    ports:
+      - "8080:80"
+
+volumes:
+  mongo-data:
+  uploads:
