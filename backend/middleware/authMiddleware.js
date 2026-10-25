@@ -4,13 +4,13 @@ const User = require('../models/User');
 // Never hand the OTP, its expiry/attempt counter or the password hash to
 // route handlers — nothing downstream needs them and they must not end up
 // in a JSON response by accident.
-const SAFE_USER_FIELDS = '-password -otp -otpExpiresAt -otpAttempts';
+const SAFE_USER_FIELDS = '-password -otp -otpExpiresAt -otpAttempts -pendingEmail -pendingEmailOtp -pendingEmailExpiresAt -pendingEmailAttempts';
 
+// The session token travels only in the Authorization header (never a
+// cookie), so each browser tab can hold its own login.
 const getToken = (req) => {
-  if (req.cookies?.token) return req.cookies.token;
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    return req.headers.authorization.split(' ')[1];
-  }
+  const header = req.headers.authorization;
+  if (header && header.startsWith('Bearer ')) return header.split(' ')[1];
   return null;
 };
 

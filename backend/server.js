@@ -3,7 +3,13 @@ dotenv.config();
 
 const mongoose = require('mongoose');
 const { validateEnv } = require('./config/env');
-validateEnv();
+// A misconfigured deployment should stop with ONE clear line, not a stack trace.
+try {
+  validateEnv();
+} catch (err) {
+  console.error(`\n${err.message} Fix the items above, then start again.`);
+  process.exit(1);
+}
 
 const connectDB = require('./config/db');
 const app = require('./app');

@@ -163,18 +163,40 @@ exports.getItem = asyncHandler(async (req, res) => {
 });
 
 exports.updateItem = asyncHandler(async (req, res) => {
-  const item = await Item.findById(req.params.id);
-  if (!item) return fail(res, 404, 'Item not found');
-  if (item.postedBy.toString() !== req.user._id.toString()) return fail(res, 403, 'Not authorized');
+  const discardUpload = () => (req.file ? removeImageFile(`/uploads/${req.file.filename}`) : null);
 
+  const item = await Item.findById(req.params.id);
+  if (!item) { await discardUpload(); return fail(res, 404, 'Item not found'); }
+  if (item.postedBy.toString() !== req.user._id.toString()) { await discardUpload(); return fail(res, 403, 'Not authorized'); }
+
+  // The request may be JSON (status changes) or multipart (edit form with
+  // an optional replacement photo), so every value is validated as a string.
   const body = req.body || {};
   const problem = validateItemFields(body);
-  if (problem) return fail(res, 400, problem);
+  if (problem) { await discardUpload(); return fail(res, 400, problem); }
+
+  const wantsRemoveImage = body.removeImage === true || body.removeImage === 'true';
+  const editsContent = EDITABLE_FIELDS.some((f) => body[f] !== undefined) || !!req.file || wantsRemoveImage;
+  if (editsContent && item.status === ITEM_STATUS.CLOSED) {
+    await discardUpload();
+    return fail(res, 400, 'Closed posts can’t be edited.');
+  }
+
+  if (req.file && !(await isRealImage(req.file.path))) {
+    await discardUpload();
+    return fail(res, 400, 'That file is not a valid JPG, PNG or WEBP image.');
+  }
 
   // Apply only allowlisted descriptive fields.
   for (const field of EDITABLE_FIELDS) {
     if (body[field] !== undefined) item[field] = isString(body[field]) ? body[field].trim() : body[field];
   }
+
+  // Photo: replace, remove, or leave alone. The old file is deleted only
+  // after the new state has been saved successfully.
+  const previousImage = item.imageUrl;
+  if (req.file) item.imageUrl = `/uploads/${req.file.filename}`;
+  else if (wantsRemoveImage) item.imageUrl = '';
 
   // Status transitions are only allowed inside the workflow the UI exposes:
   //   Open -> Claimed -> Closed, plus Claimed -> Open (handover fell through).
@@ -182,6 +204,7 @@ exports.updateItem = asyncHandler(async (req, res) => {
   if (body.status !== undefined) {
     const nextStatus = body.status;
     if (!ITEM_STATUS_VALUES.includes(nextStatus)) {
+      await discardUpload();
       return fail(res, 400, `Invalid status. Must be one of: ${ITEM_STATUS_VALUES.join(', ')}`);
     }
     const validTransitions = {
@@ -190,6 +213,7 @@ exports.updateItem = asyncHandler(async (req, res) => {
       [ITEM_STATUS.CLOSED]: [],
     };
     if (item.status !== nextStatus && !validTransitions[item.status]?.includes(nextStatus)) {
+      await discardUpload();
       return fail(res, 400, `Cannot change status from ${item.status} to ${nextStatus}`);
     }
     leftOpen = item.status === ITEM_STATUS.OPEN && nextStatus !== ITEM_STATUS.OPEN;
@@ -197,6 +221,9 @@ exports.updateItem = asyncHandler(async (req, res) => {
   }
 
   await item.save();
+  if ((req.file || wantsRemoveImage) && previousImage && previousImage !== item.imageUrl) {
+    await removeImageFile(previousImage);
+  }
 
   // Once an item is no longer Open, nobody should be left waiting on a
   // claim that can never be approved.

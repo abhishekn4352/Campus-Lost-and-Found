@@ -115,7 +115,7 @@ describe('authController.loginWithOTP (regression test for the registration-bypa
     // become "logged in" via the Login page's OTP tab without ever
     // completing registration (real name/phone/collegeId).
     expect(res.status).toHaveBeenCalledWith(404);
-    expect(res.cookie).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalledWith(expect.objectContaining({ token: expect.anything() }));
   });
 
   test('accepts a correct OTP for a genuinely verified account', async () => {
@@ -130,7 +130,8 @@ describe('authController.loginWithOTP (regression test for the registration-bypa
     const res = mockRes();
     await loginWithOTP(req, res);
 
-    expect(res.cookie).toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, token: expect.any(String) }));
+    expect(res.cookie).not.toHaveBeenCalled(); // sessions are per-tab tokens, never a shared cookie
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
@@ -264,7 +265,8 @@ describe('authController.register (regression test for account-overwrite fix)', 
     expect(userDoc.save).toHaveBeenCalled();
     expect(userDoc.isVerified).toBe(true);
     expect(res.status).toHaveBeenCalledWith(201);
-    expect(res.cookie).toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, token: expect.any(String) }));
+    expect(res.cookie).not.toHaveBeenCalled(); // sessions are per-tab tokens, never a shared cookie
   });
 });
 

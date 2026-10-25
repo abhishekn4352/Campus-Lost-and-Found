@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { protect } = require('../middleware/authMiddleware');
+const { protect, SAFE_USER_FIELDS } = require('../middleware/authMiddleware');
 const { adminOnly } = require('../middleware/adminMiddleware');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const Item = require('../models/Item');
@@ -82,7 +82,7 @@ router.get('/users', asyncHandler(async (req, res) => {
   const rx = searchRegex(req.query.q);
   if (rx) filter.$or = [{ name: rx }, { email: rx }, { collegeId: rx }];
   const [users, total] = await Promise.all([
-    User.find(filter).select('-password -otp -otpExpiresAt -otpAttempts').sort('-createdAt').skip(skip).limit(limit),
+    User.find(filter).select(SAFE_USER_FIELDS).sort('-createdAt').skip(skip).limit(limit),
     User.countDocuments(filter),
   ]);
   res.json({ users, ...pageMeta(total, page, limit) });

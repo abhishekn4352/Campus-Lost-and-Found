@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { generateOTP } = require('../utils/generateOTP');
-const { sendOTPEmail } = require('../utils/sendOTP');
+const { sendOTPEmail, sendEmailChangedNotice } = require('../utils/sendOTP');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const { SAFE_USER_FIELDS } = require('../middleware/authMiddleware');
 const { isString, clean, isEmail, isPhone, fail } = require('../utils/validators');
@@ -22,20 +22,6 @@ const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 const generateToken = (id, role) =>
   jwt.sign({ id, role }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
-// SameSite=Lax works when the site and API share a registrable domain (or
-// run behind one reverse proxy). If the frontend and API live on different
-// domains (e.g. two *.vercel.app / *.onrender.com hosts), set
-// COOKIE_SAMESITE=none — the cookie is then always Secure.
-const cookieOptions = () => {
-  const sameSite = (process.env.COOKIE_SAMESITE || 'lax').toLowerCase();
-  return {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production' || sameSite === 'none',
-    sameSite,
-    ...(process.env.COOKIE_DOMAIN && { domain: process.env.COOKIE_DOMAIN }),
-  };
-};
-
 const publicUser = (user) => ({
   _id: user._id,
   name: user.name,
@@ -45,12 +31,14 @@ const publicUser = (user) => ({
   role: user.role,
 });
 
+// Sessions are PER BROWSER TAB: the token is returned in the response body
+// and the frontend keeps it in sessionStorage and sends it as a Bearer
+// header. There is deliberately no cookie, because a cookie is shared by
+// every tab of the browser — which is exactly what made a second tab log
+// itself in as the first tab's user, and made two accounts impossible.
 const sendTokenResponse = (user, statusCode, res) => {
   const token = generateToken(user._id, user.role);
-  res
-    .status(statusCode)
-    .cookie('token', token, { ...cookieOptions(), expires: new Date(Date.now() + SEVEN_DAYS_MS) })
-    .json({ success: true, user: publicUser(user) });
+  res.status(statusCode).json({ success: true, user: publicUser(user), token });
 };
 
 const safeEqual = (a, b) => {
@@ -59,23 +47,28 @@ const safeEqual = (a, b) => {
   return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 };
 
-// Checks a submitted OTP against the one stored on the user. A wrong guess
+// Field names holding the one-time code for each flow, so sign-in codes and
+// email-change codes share one well-tested verifier.
+const LOGIN_CODE = { code: 'otp', expires: 'otpExpiresAt', attempts: 'otpAttempts' };
+const EMAIL_CODE = { code: 'pendingEmailOtp', expires: 'pendingEmailExpiresAt', attempts: 'pendingEmailAttempts' };
+
+// Checks a submitted code against the one stored on the user. A wrong guess
 // counts against a per-code budget; once spent, the code is destroyed and
 // the person must request a new one.
-async function checkOtp(user, submitted) {
+async function checkOtp(user, submitted, f = LOGIN_CODE) {
   const supplied = isString(submitted) ? submitted.trim() : '';
   const valid =
-    !!user.otp &&
-    !!user.otpExpiresAt &&
-    new Date() <= user.otpExpiresAt &&
-    (user.otpAttempts || 0) < MAX_OTP_ATTEMPTS &&
-    safeEqual(user.otp, supplied);
+    !!user[f.code] &&
+    !!user[f.expires] &&
+    new Date() <= user[f.expires] &&
+    (user[f.attempts] || 0) < MAX_OTP_ATTEMPTS &&
+    safeEqual(user[f.code], supplied);
 
-  if (!valid && user.otp) {
-    const attempts = (user.otpAttempts || 0) + 1;
+  if (!valid && user[f.code]) {
+    const attempts = (user[f.attempts] || 0) + 1;
     const update = attempts >= MAX_OTP_ATTEMPTS
-      ? { $set: { otpAttempts: attempts }, $unset: { otp: 1, otpExpiresAt: 1 } }
-      : { $set: { otpAttempts: attempts } };
+      ? { $set: { [f.attempts]: attempts }, $unset: { [f.code]: 1, [f.expires]: 1 } }
+      : { $set: { [f.attempts]: attempts } };
     await User.updateOne({ _id: user._id }, update);
   }
   return valid;
@@ -293,10 +286,10 @@ exports.changePassword = asyncHandler(async (req, res) => {
   res.json({ message: 'Password changed.' });
 });
 
-// @desc    Logout User / Clear Cookie
+// @desc    Logout. Tokens are stateless, so the client simply forgets its own
+//          token; this endpoint exists for API compatibility.
 // @route   GET /api/auth/logout
 exports.logout = (req, res) => {
-  res.clearCookie('token', cookieOptions());
   res.status(200).json({ success: true, message: 'Logged out' });
 };
 
@@ -333,4 +326,71 @@ exports.updateProfile = asyncHandler(async (req, res) => {
   }).select(SAFE_USER_FIELDS);
   if (!user) return fail(res, 404, 'User not found');
   res.json(user);
+});
+
+// @desc    Step 1 of changing email: confirm the password, then mail a code to
+//          the NEW address. Nothing changes until step 2.
+// @route   POST /api/auth/email/request   { newEmail, password }
+exports.requestEmailChange = asyncHandler(async (req, res) => {
+  const { newEmail, password } = req.body || {};
+  if (!isEmail(newEmail)) return fail(res, 400, 'Enter a valid email address.');
+  if (!isString(password) || !password) return fail(res, 400, 'Enter your current password to confirm it is you.');
+  const normalized = newEmail.trim().toLowerCase();
+
+  const user = await User.findById(req.user._id);
+  if (!user) return fail(res, 404, 'User not found');
+  if (normalized === user.email) return fail(res, 400, 'That is already your email address.');
+  if (!(await user.matchPassword(password))) return fail(res, 400, 'Password is incorrect.');
+  if (await User.exists({ email: normalized, isVerified: true, _id: { $ne: user._id } })) {
+    return fail(res, 409, 'That email address is already used by another account.');
+  }
+
+  if (user.pendingEmailExpiresAt) {
+    const issuedAt = new Date(user.pendingEmailExpiresAt).getTime() - OTP_TTL_MS;
+    if (Date.now() - issuedAt < OTP_RESEND_GAP_MS) return fail(res, 429, 'Please wait 30 seconds before requesting another code.');
+  }
+
+  const otp = generateOTP();
+  user.pendingEmail = normalized;
+  user.pendingEmailOtp = otp;
+  user.pendingEmailExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+  user.pendingEmailAttempts = 0;
+  await user.save();
+
+  try {
+    await sendOTPEmail(normalized, user.name, otp, 'confirm your new email address');
+  } catch (err) {
+    console.error('Failed to send email-change code:', err.message);
+    return fail(res, 502, 'We could not send the email right now. Please try again in a minute.');
+  }
+  res.json({ message: `We sent a 6-digit code to ${normalized}.`, email: normalized });
+});
+
+// @desc    Step 2: the code proves the new address belongs to this person.
+// @route   POST /api/auth/email/confirm   { otp }
+exports.confirmEmailChange = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user || !user.pendingEmail) return fail(res, 400, 'There is no email change in progress. Start again.');
+  if (!(await checkOtp(user, req.body?.otp, EMAIL_CODE))) return fail(res, 400, 'Invalid or expired code.');
+
+  const newEmail = user.pendingEmail;
+  const oldEmail = user.email;
+  if (await User.exists({ email: newEmail, isVerified: true, _id: { $ne: user._id } })) {
+    return fail(res, 409, 'That email address is already used by another account.');
+  }
+  // An abandoned, never-verified sign-up may still hold the address — it
+  // carries no data, so clear it out of the way of the unique index.
+  await User.deleteMany({ email: newEmail, isVerified: false, _id: { $ne: user._id } });
+
+  user.email = newEmail;
+  user.pendingEmail = undefined;
+  user.pendingEmailOtp = undefined;
+  user.pendingEmailExpiresAt = undefined;
+  user.pendingEmailAttempts = 0;
+  await user.save();
+
+  // Tell the OLD address, so a hijacked session can't silently re-point the account.
+  sendEmailChangedNotice(oldEmail, user.name, newEmail).catch((err) => console.error('Email-change notice failed:', err.message));
+
+  res.json({ message: 'Email updated.', user: publicUser(user) });
 });

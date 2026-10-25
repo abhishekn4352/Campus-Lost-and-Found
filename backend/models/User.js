@@ -14,6 +14,12 @@ const userSchema = new mongoose.Schema({
   // code is burned and a new one must be requested, so a 6-digit code can't
   // be brute-forced from many IPs inside its 10-minute window.
   otpAttempts:  { type: Number, default: 0 },
+  // Email change in progress: the new address only replaces the current one
+  // after its owner types the code we mailed to it.
+  pendingEmail:          { type: String, lowercase: true, trim: true },
+  pendingEmailOtp:       { type: String },
+  pendingEmailExpiresAt: { type: Date },
+  pendingEmailAttempts:  { type: Number, default: 0 },
   isVerified:   { type: Boolean, default: false },
   // Admins can suspend an account (abuse, spam) without deleting its history.
   isActive:     { type: Boolean, default: true },

@@ -5,6 +5,7 @@ const { ITEM_STATUS } = require('../constants/itemStatus');
 const { HttpError } = require('../utils/httpError');
 const { findOrCreateConversation } = require('./conversationService');
 const { sendClaimResultEmail } = require('../utils/sendOTP');
+const { notifyUserSafe } = require('./pushService');
 
 // Approve or reject a pending claim. Shared by the item owner's review
 // screen and the admin panel, so both follow exactly the same rules.
@@ -53,6 +54,13 @@ async function resolveClaim({ claimId, actor, action, note = '' }) {
   // Tell the claimant — best effort; a mail outage must not undo the decision.
   User.findById(claim.claimedBy).select('name email').then((claimant) => {
     if (claimant) {
+      notifyUserSafe(claimant._id, {
+        title: action === 'approve' ? 'Your claim was approved' : 'Your claim wasn’t approved',
+        body: `“${item.title}”`,
+        url: action === 'approve' && conversationId ? `/messages/${conversationId}` : '/claims',
+        tag: `claim-${claim._id}`,
+        urgency: action === 'approve' ? 'high' : 'normal',
+      });
       return sendClaimResultEmail(claimant.email, claimant.name, item.title, action === 'approve', trimmedNote);
     }
   }).catch((err) => console.error('Claim result email failed:', err.message));

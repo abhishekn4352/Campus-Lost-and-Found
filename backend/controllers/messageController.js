@@ -6,6 +6,7 @@ const { sendMessageEmail } = require('../utils/sendOTP');
 const { asyncHandler } = require('../middleware/errorMiddleware');
 const { clean, fail } = require('../utils/validators');
 const { findOrCreateConversation } = require('../services/conversationService');
+const { notifyUserSafe } = require('../services/pushService');
 const { serializeConversation } = require('../utils/serializeConversation');
 
 const INACTIVE_AFTER_MS = 3 * 60 * 1000;     // only email people who aren't looking at the app
@@ -61,6 +62,14 @@ exports.sendMessage = asyncHandler(async (req, res) => {
   try {
     const receiverId = conv.participants.find((p) => String(p) !== String(req.user._id));
     const [receiver, item] = await Promise.all([User.findById(receiverId), Item.findById(conv.itemId)]);
+    if (receiver && item && receiver.isActive !== false) {
+      notifyUserSafe(receiver._id, {
+        title: 'New message',
+        body: `${req.user.name} wrote to you about “${item.title}”`,
+        url: `/messages/${conv._id}`,
+        tag: `msg-${conv._id}`,
+      });
+    }
     const isInactive = receiver && (!receiver.lastActive || Date.now() - new Date(receiver.lastActive).getTime() > INACTIVE_AFTER_MS);
     const cooledDown = !conv.lastEmailAt || Date.now() - new Date(conv.lastEmailAt).getTime() > EMAIL_COOLDOWN_MS;
     if (isInactive && cooledDown && item && receiver.isActive !== false) {

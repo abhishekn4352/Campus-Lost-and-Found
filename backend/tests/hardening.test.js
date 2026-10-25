@@ -49,7 +49,7 @@ describe('OTP hardening', () => {
     const res = mockRes();
     await loginWithOTP({ body: { email: 'riya@college.edu', otp: '111222' } }, res);
     expect(res.status).toHaveBeenCalledWith(401);
-    expect(res.cookie).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalledWith(expect.objectContaining({ token: expect.anything() }));
   });
 
   test('a wrong guess is counted, and the 5th one destroys the code', async () => {

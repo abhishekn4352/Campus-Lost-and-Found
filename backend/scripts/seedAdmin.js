@@ -13,7 +13,7 @@ const seedAdmin = async () => {
     const adminEmail = process.env.SEED_ADMIN_EMAIL;
     const adminPassword = process.env.SEED_ADMIN_PASSWORD;
     const adminName = process.env.SEED_ADMIN_NAME || 'Admin User';
-    const adminCollegeId = process.env.SEED_ADMIN_COLLEGE_ID || 'ADMIN001';
+    const adminCollegeId = process.env.SEED_ADMIN_COLLEGE_ID || 'ADMIN';
 
     if (!adminEmail || !adminPassword) {
       console.error('Missing SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD environment variables.');
@@ -29,10 +29,13 @@ const seedAdmin = async () => {
     await mongoose.connect(process.env.MONGO_URI);
     console.log('MongoDB connected');
 
-    const existingAdmin = await User.findOne({ email: adminEmail });
+    const existingAdmin = await User.findOne({
+      $or: [{ email: adminEmail }, { collegeId: adminCollegeId }],
+    });
 
     if (existingAdmin) {
-      console.log('Admin user already exists');
+      console.log('Admin user already exists (matched by email or collegeId):');
+      console.log(`  email: ${existingAdmin.email}, collegeId: ${existingAdmin.collegeId}`);
       process.exit();
     }
 

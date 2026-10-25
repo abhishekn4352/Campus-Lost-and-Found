@@ -112,3 +112,16 @@ exports.sendClaimResultEmail = async (toEmail, toName, itemTitle, approved, note
     }),
   });
 };
+
+exports.sendEmailChangedNotice = async (oldEmail, name, newEmail) => {
+  await deliver({
+    to: oldEmail,
+    subject: 'Your email address was changed',
+    devText: `Email changed for ${name}: ${oldEmail} -> ${newEmail}`,
+    html: layout({
+      heading: `Hi ${escapeHtml(name)},`,
+      bodyHtml: `<p style="margin:0 0 12px">The email on your Campus Lost &amp; Found account was changed to <strong>${escapeHtml(newEmail)}</strong>.</p>
+        <p style="margin:0">If this wasn't you, contact a campus admin right away — your old address will no longer receive codes.</p>`,
+    }),
+  });
+};

@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const {
   register, login, loginWithOTP, requestOTP, resetPassword, changePassword,
-  logout, getMe, updateProfile,
+  logout, getMe, updateProfile, requestEmailChange, confirmEmailChange,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/authMiddleware');
 const { otpRequestLimiter, loginLimiter } = require('../middleware/rateLimiters');
@@ -15,5 +15,7 @@ router.get('/logout', logout);
 router.get('/me', protect, getMe);
 router.put('/profile', protect, updateProfile);
 router.put('/password', protect, loginLimiter, changePassword);
+router.post('/email/request', protect, otpRequestLimiter, requestEmailChange);
+router.post('/email/confirm', protect, loginLimiter, confirmEmailChange);
 
 module.exports = router;
