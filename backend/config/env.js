@@ -21,9 +21,11 @@ function validateEnv() {
     if (isProduction()) problems.push('EMAIL_USER and EMAIL_PASS are required in production (OTP emails cannot be sent without them).');
     else warnings.push('EMAIL_USER / EMAIL_PASS not set — OTP emails will be printed to the console instead of sent.');
   }
-  if (process.env.COOKIE_SAMESITE && !['lax', 'strict', 'none'].includes(process.env.COOKIE_SAMESITE.toLowerCase())) {
-    problems.push('COOKIE_SAMESITE must be one of: lax, strict, none.');
-  }
+
+  const hasPub = !!process.env.VAPID_PUBLIC_KEY;
+  const hasPriv = !!process.env.VAPID_PRIVATE_KEY;
+  if (hasPub !== hasPriv) problems.push('Set BOTH VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY (or neither). Generate a pair with: npm run vapid');
+  else if (!hasPub) warnings.push('VAPID keys not set — push notifications are disabled. Generate keys with: npm run vapid');
 
   warnings.forEach((w) => console.warn(`[config] ${w}`));
   if (problems.length) {

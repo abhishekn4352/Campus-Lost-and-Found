@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { NotificationsProvider } from './context/NotificationsContext';
 import { ConfirmProvider } from './context/ConfirmContext';
+import { PushProvider } from './context/PushContext';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -18,6 +19,7 @@ const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const PostItem = lazy(() => import('./pages/PostItem'));
+const EditItem = lazy(() => import('./pages/EditItem'));
 const MyPosts = lazy(() => import('./pages/MyPosts'));
 const Claims = lazy(() => import('./pages/Claims'));
 const Profile = lazy(() => import('./pages/Profile'));
@@ -67,6 +69,7 @@ function AppRoutes() {
 
         <Route path="/dashboard" element={priv(<Dashboard />)} />
         <Route path="/post-item" element={priv(<PostItem />)} />
+        <Route path="/items/:id/edit" element={priv(<EditItem />)} />
         <Route path="/my-posts" element={priv(<MyPosts />)} />
         <Route path="/claims" element={priv(<Claims />)} />
         <Route path="/my-claims" element={<Navigate to="/claims" replace />} />
@@ -92,15 +95,14 @@ export default function App() {
         <AuthProvider>
           <NotificationsProvider>
             <ConfirmProvider>
-              <BrowserRouter
-                basename={import.meta.env.BASE_URL}
-                future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-              >
-                <Navbar />
-                <main id="main" tabIndex={-1}>
-                  <AppRoutes />
-                </main>
-                <Footer />
+              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                <PushProvider>
+                  <Navbar />
+                  <main id="main" tabIndex={-1}>
+                    <AppRoutes />
+                  </main>
+                  <Footer />
+                </PushProvider>
               </BrowserRouter>
             </ConfirmProvider>
           </NotificationsProvider>

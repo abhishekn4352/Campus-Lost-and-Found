@@ -3,7 +3,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const mongoose = require('mongoose');
-const cookieParser = require('cookie-parser');
 const { notFound, errorHandler } = require('./middleware/errorMiddleware');
 const { apiLimiter } = require('./middleware/rateLimiters');
 const { UPLOAD_DIR } = require('./config/paths');
@@ -38,11 +37,9 @@ app.use(cors({
     err.statusCode = 403;
     callback(err);
   },
-  credentials: true,
 }));
 
 app.use(express.json({ limit: '50kb' }));
-app.use(cookieParser());
 
 // Uploaded files never change after creation (names are unique), so they
 // can be cached aggressively.
@@ -60,6 +57,7 @@ app.use('/api/items', require('./routes/itemRoutes'));
 app.use('/api/claims', require('./routes/claimRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/push', require('./routes/pushRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 // Must be registered after all routes: catches unmatched routes, then
