@@ -8,6 +8,8 @@ import useDocumentTitle from '../hooks/useDocumentTitle';
 import PasswordInput from '../components/PasswordInput';
 import PageHeader from '../components/PageHeader';
 import Button from '../components/Button';
+import ChangeEmailDialog from '../components/ChangeEmailDialog';
+import { PushPanel } from '../components/PushControls';
 import { Alert, PageLoader } from '../components/States';
 import API from '../api/axios';
 
@@ -25,6 +27,7 @@ export default function Profile() {
   const [pw, setPw] = useState({ currentPassword: '', newPassword: '' });
   const [pwSaving, setPwSaving] = useState(false);
   const [pwError, setPwError] = useState('');
+  const [emailDialog, setEmailDialog] = useState(false);
 
   useEffect(() => { if (user) setForm({ name: user.name || '', phone: user.phone || '' }); }, [user]);
 
@@ -88,7 +91,11 @@ export default function Profile() {
           </div>
           <div className="field">
             <label className="label" htmlFor="profile-email">Email</label>
-            <input id="profile-email" className="input" value={user.email} disabled />
+            <div className="row">
+              <input id="profile-email" className="input grow" value={user.email} disabled />
+              <Button onClick={() => setEmailDialog(true)}>Change email</Button>
+            </div>
+            <span className="hint">We’ll email a code to the new address to confirm it.</span>
           </div>
           <div className="field">
             <label className="label" htmlFor="profile-college">College ID</label>
@@ -98,6 +105,14 @@ export default function Profile() {
         </form>
       </section>
 
+      {emailDialog && (
+        <ChangeEmailDialog
+          currentEmail={user.email}
+          onClose={() => setEmailDialog(false)}
+          onChanged={(updated) => { login(updated); setEmailDialog(false); showToast('Email address updated.', 'success'); }}
+        />
+      )}
+
       <section className="panel" aria-labelledby="pw-h">
         <h2 id="pw-h" style={{ fontSize: '1.2rem' }}>Change password</h2>
         {pwError && <Alert type="error">{pwError}</Alert>}
@@ -106,6 +121,13 @@ export default function Profile() {
           <PasswordInput label="New password" name="newPassword" value={pw.newPassword} onChange={(e) => setPw({ ...pw, newPassword: e.target.value })} autoComplete="new-password" showStrength hint={`At least ${MIN_PASSWORD} characters.`} />
           <Button type="submit" loading={pwSaving}>Update password</Button>
         </form>
+      </section>
+
+      <PushPanel />
+
+      <section className="panel" aria-labelledby="session-h">
+        <h2 id="session-h" style={{ fontSize: '1.2rem' }}>This session</h2>
+        <p className="muted">You’re signed in on <strong>this browser tab only</strong>. Open another tab to sign in as a different person at the same time; closing this tab signs you out.</p>
       </section>
 
       <section className="panel" aria-labelledby="theme-h">

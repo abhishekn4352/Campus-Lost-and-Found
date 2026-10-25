@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { MapPin, Calendar, User, Hourglass, MessageCircle, HandHelping, ArrowLeft, Lock, PackageSearch, Undo2 } from 'lucide-react';
+import { MapPin, Calendar, User, Hourglass, MessageCircle, HandHelping, ArrowLeft, Lock, PackageSearch, Undo2, Pencil } from 'lucide-react';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
@@ -173,7 +173,8 @@ export default function ItemDetail() {
               <>
                 <Alert type="info">This is your post. Manage its status and review claims from your posts.</Alert>
                 <div className="row row-wrap">
-                  <Button to="/my-posts" variant="primary">Manage my posts</Button>
+                  {item.status !== 'Closed' && <Button to={`/items/${item._id}/edit`} variant="primary" icon={Pencil}>Edit post</Button>}
+                  <Button to="/my-posts">Manage my posts</Button>
                   {item.type === 'found' && <Button to="/claims?tab=received">Review claims</Button>}
                 </div>
               </>

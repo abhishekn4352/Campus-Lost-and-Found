@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Handshake, PackageCheck, Undo2, Inbox, ClipboardList } from 'lucide-react';
+import { Plus, Trash2, Handshake, PackageCheck, Undo2, Inbox, ClipboardList, Pencil } from 'lucide-react';
 import API from '../api/axios';
 import { useToast } from '../context/ToastContext';
 import { useConfirm } from '../context/ConfirmContext';
@@ -117,6 +117,9 @@ export default function MyPosts() {
                       )}
                     </div>
                     <div className="list-actions">
+                      {item.status !== 'Closed' && (
+                        <Button size="sm" icon={Pencil} to={`/items/${item._id}/edit`} aria-label={`Edit ${item.title}`}>Edit</Button>
+                      )}
                       {item.status === 'Open' && (
                         <Button size="sm" variant="success" icon={Handshake} disabled={busy}
                           onClick={() => changeStatus(item, 'Claimed', { title: 'Mark as matched?', message: 'Use this when you’ve found who the item belongs to. Any pending claims will be closed.', confirmLabel: 'Mark as matched' })}>

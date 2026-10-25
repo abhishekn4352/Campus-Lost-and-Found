@@ -9,6 +9,7 @@ import { plural } from '../utils/format';
 import useDocumentTitle from '../hooks/useDocumentTitle';
 import ItemCard from '../components/ItemCard';
 import Button from '../components/Button';
+import { PushPrompt } from '../components/PushControls';
 import PageHeader from '../components/PageHeader';
 import { CardSkeletonGrid, ErrorState } from '../components/States';
 
@@ -53,6 +54,8 @@ export default function Dashboard() {
       <PageHeader title={`Hi, ${firstName}`} subtitle="Here’s what needs your attention.">
         <Button to="/post-item" variant="primary" icon={Plus}>Report an item</Button>
       </PageHeader>
+
+      <PushPrompt />
 
       {attention.length > 0 && (
         <div className="attention">

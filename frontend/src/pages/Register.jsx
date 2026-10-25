@@ -74,7 +74,7 @@ export default function Register() {
         name: form.name.trim(), email: form.email.trim(), password: form.password,
         phone: form.phone.trim(), collegeId: form.collegeId.trim(), otp: form.otp,
       });
-      login(data.user);
+      login(data.user, data.token);
       showToast(`Welcome, ${data.user.name.split(' ')[0]}!`, 'success');
       navigate('/dashboard', { replace: true });
     } catch (err) {

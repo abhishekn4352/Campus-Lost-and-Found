@@ -32,8 +32,8 @@ export default function Login() {
   const field = (name) => (e) => setForm((f) => ({ ...f, [name]: e.target.value }));
   const switchMode = (next) => { setMode(next); setCodeSent(false); setError(''); setInfo(''); setForm((f) => ({ ...f, otp: '', newPassword: '' })); };
 
-  const finishLogin = (user) => {
-    login(user);
+  const finishLogin = ({ user, token }) => {
+    login(user, token);
     showToast(`Welcome back, ${user.name.split(' ')[0]}!`, 'success');
     const from = location.state?.from;
     navigate(from || (user.role === 'admin' ? '/admin' : '/dashboard'), { replace: true });
@@ -63,7 +63,7 @@ export default function Login() {
     setLoading(true); setError('');
     try {
       const { data } = await API.post('/auth/login', { email: form.email.trim(), password: form.password });
-      finishLogin(data.user);
+      finishLogin(data);
     } catch (err) {
       setError(getErrorMessage(err, 'Login failed. Check your email and password.'));
       setLoading(false);
@@ -76,7 +76,7 @@ export default function Login() {
     setLoading(true); setError('');
     try {
       const { data } = await API.post('/auth/login-otp', { email: form.email.trim(), otp: form.otp });
-      finishLogin(data.user);
+      finishLogin(data);
     } catch (err) {
       setError(getErrorMessage(err, 'That code didn’t work.'));
       setLoading(false);
