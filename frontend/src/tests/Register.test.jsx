@@ -85,13 +85,13 @@ describe('Register page', () => {
     renderRegister();
     await reachDetailsStep(user);
     await fillDetails(user);
-    API.post.mockResolvedValueOnce({ data: { user: { name: 'Riya Sharma', role: 'student' } } });
+    API.post.mockResolvedValueOnce({ data: { user: { name: 'Riya Sharma', role: 'student' }, token: 'tok-9' } });
     await user.click(screen.getByRole('button', { name: 'Create account' }));
 
     await waitFor(() => expect(API.post).toHaveBeenCalledWith('/auth/register-verify', {
       name: 'Riya Sharma', email: 'riya@college.edu', password: 'password123', phone: '98765 43210', collegeId: 'STU2041', otp: '123456',
     }));
-    expect(mockLogin).toHaveBeenCalledWith({ name: 'Riya Sharma', role: 'student' });
+    expect(mockLogin).toHaveBeenCalledWith({ name: 'Riya Sharma', role: 'student' }, 'tok-9');
     expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
   });
 });

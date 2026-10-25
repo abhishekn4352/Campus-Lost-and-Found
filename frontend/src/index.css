@@ -455,6 +455,10 @@ a.list-title:hover { text-decoration: underline; }
 .attention a:hover { filter: brightness(0.97); }
 .attention a span { flex: 1; }
 
+.push-prompt { display: flex; align-items: center; gap: var(--s3); background: var(--info-soft); color: var(--text); border: 1px solid color-mix(in srgb, var(--info) 25%, transparent); border-radius: var(--r); padding: var(--s3) var(--s4); margin-bottom: var(--s5); }
+.push-prompt > svg { color: var(--info); flex-shrink: 0; }
+@media (max-width: 599px) { .push-prompt { flex-wrap: wrap; } .push-prompt .grow { flex-basis: 100%; order: -1; } }
+
 /* ---------- Table ---------- */
 .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
 .table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 720px; }

@@ -61,6 +61,7 @@ describe('ItemDetail', () => {
     renderDetail();
     await screen.findByRole('heading', { name: 'Black wallet' });
     expect(screen.getByText(/This is your post/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Edit post/ })).toHaveAttribute('href', '/items/i1/edit');
     expect(screen.queryByRole('button', { name: /claim it/ })).not.toBeInTheDocument();
   });
 

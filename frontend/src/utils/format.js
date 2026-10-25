@@ -33,3 +33,11 @@ export const todayInputValue = () => {
 };
 
 export const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+// ISO timestamp -> value for <input type="date"> in the viewer's own timezone.
+export const toInputDate = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+};

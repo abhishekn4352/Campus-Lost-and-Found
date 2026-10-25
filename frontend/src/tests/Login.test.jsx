@@ -33,13 +33,13 @@ describe('Login page', () => {
   });
 
   test('successful login stores the user and goes to the dashboard', async () => {
-    API.post.mockResolvedValue({ data: { user: { name: 'Riya Sharma', role: 'student' } } });
+    API.post.mockResolvedValue({ data: { user: { name: 'Riya Sharma', role: 'student' }, token: 'tok-1' } });
     const user = userEvent.setup();
     renderLogin();
     await fillPasswordForm(user);
     await user.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith({ name: 'Riya Sharma', role: 'student' }));
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith({ name: 'Riya Sharma', role: 'student' }, 'tok-1'));
     expect(API.post).toHaveBeenCalledWith('/auth/login', { email: 'riya@college.edu', password: 'password123' });
     expect(mockNavigate).toHaveBeenCalledWith('/dashboard', { replace: true });
   });

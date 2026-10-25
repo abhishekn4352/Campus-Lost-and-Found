@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import API from '../api/axios';
 import { onSessionExpired } from '../utils/authEvents';
+import { getToken, setToken, clearToken } from '../utils/session';
+import { detachPush } from '../push/pushClient';
 
 const AuthContext = createContext();
 
@@ -15,7 +17,7 @@ export function AuthProvider({ children }) {
 
   // If any API call comes back 401 after we believed the user was
   // logged in, the session is no longer valid server-side (expired/
-  // invalid cookie). Clear local state immediately so the Navbar and
+  // invalid or expired token). Clear local state immediately so the Navbar and
   // every PrivateRoute react right away, instead of continuing to show a
   // "logged in" user whose requests are silently failing until they
   // happen to refresh the page.
@@ -24,33 +26,38 @@ export function AuthProvider({ children }) {
   }, []);
 
   const checkAuth = async () => {
+    // A brand-new tab has no token, so there is nothing to check — this tab
+    // starts signed out even if another tab is signed in.
+    if (!getToken()) {
+      setLoading(false);
+      return;
+    }
     try {
       const { data } = await API.get('/auth/me');
       setUser(data);
     } catch (err) {
+      clearToken();
       setUser(null);
     } finally {
       setLoading(false);
     }
   };
 
-  const login = (userData) => {
+  // `token` is supplied by the login/register responses; Profile calls
+  // login(user) without it just to refresh the shared user object.
+  const login = (userData, token) => {
+    if (token) setToken(token);
     setUser(userData);
   };
 
+  // Signing out only affects THIS tab: it forgets its own token. Other tabs
+  // (possibly signed in as someone else) are untouched.
   const logout = async () => {
-    try {
-      await API.get('/auth/logout');
-    } catch (err) {
-      console.error('Logout request failed (clearing local session anyway)', err);
-    } finally {
-      // Logging out is fundamentally a client-side decision: whether or
-      // not the server-side cookie-clear call succeeds, the app must
-      // stop treating this browser as authenticated. Previously this
-      // only ran on the success path, so a network hiccup during logout
-      // left the Navbar/PrivateRoutes still showing the user as signed in.
-      setUser(null);
-    }
+    // Stop notifications for THIS person on this browser (needs the token,
+    // so it must happen before it is cleared). Bounded to 2s, never throws.
+    await detachPush().catch(() => {});
+    clearToken();
+    setUser(null);
   };
 
   const isAdmin = () => user?.role === 'admin';

@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Profile from '../pages/Profile';
 
@@ -82,5 +82,66 @@ describe('Profile page', () => {
     await user.type(screen.getByLabelText('New password'), 'new-password-1');
     await user.click(screen.getByRole('button', { name: 'Update password' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Current password is incorrect.');
+  });
+});
+
+describe('Profile — change email', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  test('two steps: password + new address sends a code, then the code confirms and refreshes the user', async () => {
+    API.post = vi.fn()
+      .mockResolvedValueOnce({ data: { email: 'new@college.edu' } })
+      .mockResolvedValueOnce({ data: { user: { ...currentUser, email: 'new@college.edu' } } });
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.click(screen.getByRole('button', { name: 'Change email' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Change email address' });
+
+    await user.type(within(dialog).getByLabelText('New email address'), 'new@college.edu');
+    await user.type(within(dialog).getByLabelText('Current password'), 'secret-pass');
+    await user.click(within(dialog).getByRole('button', { name: 'Send code' }));
+    await waitFor(() => expect(API.post).toHaveBeenCalledWith('/auth/email/request', { newEmail: 'new@college.edu', password: 'secret-pass' }));
+
+    await user.click(await within(dialog).findByLabelText('Digit 1 of 6'));
+    await user.paste('424242');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm new email' }));
+    await waitFor(() => expect(API.post).toHaveBeenCalledWith('/auth/email/confirm', { otp: '424242' }));
+    expect(mockLogin).toHaveBeenCalledWith(expect.objectContaining({ email: 'new@college.edu' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  test('step 1 validates locally: bad address, same address, missing password', async () => {
+    API.post = vi.fn();
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.click(screen.getByRole('button', { name: 'Change email' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('New email address'), 'nope');
+    await user.click(within(dialog).getByRole('button', { name: 'Send code' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/valid email/i);
+
+    await user.clear(within(dialog).getByLabelText('New email address'));
+    await user.type(within(dialog).getByLabelText('New email address'), 'riya@college.edu');
+    await user.click(within(dialog).getByRole('button', { name: 'Send code' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/already your email/i);
+
+    await user.clear(within(dialog).getByLabelText('New email address'));
+    await user.type(within(dialog).getByLabelText('New email address'), 'other@college.edu');
+    await user.click(within(dialog).getByRole('button', { name: 'Send code' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/current password/i);
+    expect(API.post).not.toHaveBeenCalled();
+  });
+
+  test('a wrong password from the server stays on step 1 with its message', async () => {
+    API.post = vi.fn().mockRejectedValue({ response: { data: { message: 'Password is incorrect.' } } });
+    const user = userEvent.setup();
+    render(<Profile />);
+    await user.click(screen.getByRole('button', { name: 'Change email' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('New email address'), 'new@college.edu');
+    await user.type(within(dialog).getByLabelText('Current password'), 'bad');
+    await user.click(within(dialog).getByRole('button', { name: 'Send code' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Password is incorrect.');
+    expect(within(dialog).getByLabelText('New email address')).toBeInTheDocument();
   });
 });
