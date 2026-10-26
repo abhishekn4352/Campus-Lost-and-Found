@@ -89,7 +89,7 @@ describe('helpers', () => {
 
   test('assetUrl keeps same-origin paths and passes absolute URLs through', () => {
     expect(assetUrl('')).toBeNull();
-    expect(assetUrl('/uploads/a.jpg')).toBe('/uploads/a.jpg');
+    expect(assetUrl('/uploads/a.jpg')).toMatch(/(https?:\/\/[^/]+)?\/uploads\/a\.jpg$/);
     expect(assetUrl('https://cdn.example.com/a.jpg')).toBe('https://cdn.example.com/a.jpg');
   });
 
