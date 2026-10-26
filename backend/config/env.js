@@ -17,9 +17,9 @@ function validateEnv() {
   if (isProduction() && !process.env.FRONTEND_URL) {
     problems.push('FRONTEND_URL is required in production (it is used for CORS and email links).');
   }
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    if (isProduction()) problems.push('EMAIL_USER and EMAIL_PASS are required in production (OTP emails cannot be sent without them).');
-    else warnings.push('EMAIL_USER / EMAIL_PASS not set — OTP emails will be printed to the console instead of sent.');
+  if (!process.env.BREVO_API_KEY && (!process.env.EMAIL_USER || !process.env.EMAIL_PASS)) {
+    if (isProduction()) problems.push('Either BREVO_API_KEY or (EMAIL_USER and EMAIL_PASS) is required in production (OTP emails cannot be sent without them).');
+    else warnings.push('Email credentials not set — OTP emails will be printed to the console instead of sent.');
   }
 
   const hasPub = !!process.env.VAPID_PUBLIC_KEY;

@@ -34,11 +34,39 @@ function layout({ heading, bodyHtml, cta }) {
   </div>`;
 }
 
+async function sendViaBrevo({ to, subject, html }) {
+  const senderEmail = process.env.EMAIL_USER || 'abhishekn4352@gmail.com';
+  const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'accept': 'application/json',
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: 'Campus Lost & Found', email: senderEmail },
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Brevo Error]', response.status, errorText);
+    throw new Error(`Failed to send email via Brevo (${response.status})`);
+  }
+}
+
 // In development (no SMTP credentials) print the email instead of failing,
 // so the whole app — including OTP sign-up — can be exercised locally.
 // In production this is never reached: validateEnv() refuses to boot
 // without credentials.
 async function deliver({ to, subject, html, devText }) {
+  if (process.env.BREVO_API_KEY) {
+    return await sendViaBrevo({ to, subject, html });
+  }
+
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
     if (process.env.NODE_ENV === 'production') throw new Error('Email is not configured.');
     console.log(`\n[DEV EMAIL] to=${to} subject="${subject}"\n${devText}\n`);
