@@ -4,12 +4,12 @@
 
 [![Live Demo](https://img.shields.io/badge/🌐_Live_Demo-Visit_Site-14213d?style=for-the-badge)](https://lost-found-campus-based-system.vercel.app/)
 [![API Status](https://img.shields.io/badge/⚡_API-Online-22c55e?style=for-the-badge)](https://campus-lostfound-api.onrender.com/api/health)
-[![CI](https://img.shields.io/github/actions/workflow/status/abhishekn4352/Lost-Found-Campus-Based-System/ci.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/abhishekn4352/Lost-Found-Campus-Based-System/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/abhishekn4352/Campus-Lost-and-Found/ci.yml?branch=main&style=for-the-badge&label=CI&logo=github)](https://github.com/abhishekn4352/Campus-Lost-and-Found/actions)
 [![License](https://img.shields.io/badge/License-MIT-ffd23f?style=for-the-badge)](LICENSE)
 
 A full-stack web app for college campuses. Students report **lost** items, post **found** items, **claim** what's theirs and chat to arrange the handover — all while keeping phone numbers and emails private until both parties agree.
 
-**[Live Demo](https://lost-found-campus-based-system.vercel.app/)** · **[API Docs](#-api-reference)** · **[Deployment Guide](DEPLOYMENT.md)** · **[Report Bug](https://github.com/abhishekn4352/Lost-Found-Campus-Based-System/issues)**
+**[Live Demo](https://lost-found-campus-based-system.vercel.app/)** · **[API Docs](#-api-reference)** · **[Deployment Guide](DEPLOYMENT.md)** · **[Report Bug](https://github.com/abhishekn4352/Campus-Lost-and-Found/issues)**
 
 </div>
 
@@ -161,8 +161,8 @@ flowchart LR
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/abhishekn4352/Lost-Found-Campus-Based-System.git
-cd Lost-Found-Campus-Based-System
+git clone https://github.com/abhishekn4352/Campus-Lost-and-Found.git
+cd Campus-Lost-and-Found
 ```
 
 ### 2. Start the API
@@ -216,7 +216,7 @@ All settings are environment variables. Full reference in **[DEPLOYMENT.md → E
 ## 📂 Project Structure
 
 ```
-Lost-Found-Campus-Based-System/
+Campus-Lost-and-Found/
 ├── 📁 backend/                   Express API
 │   ├── server.js                 Entry: validates config, connects DB, graceful shutdown
 │   ├── app.js                    Middleware stack + routes
